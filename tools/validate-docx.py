@@ -34,13 +34,15 @@ NS = {
 }
 
 # ============================================================
-# 레이아웃 상수 (Landscape A4 기준, 단위: pt)
+# 레이아웃 상수 (단위: pt)
 # ============================================================
-PAGE_HEIGHT_PT = 595          # A4 landscape 높이 (210mm)
 MARGIN_TOP_PT = 54            # 상단 여백 (~19mm)
 MARGIN_BOTTOM_PT = 54         # 하단 여백
 HEADER_FOOTER_PT = 30         # 머릿글/바닥글 예약 공간
-USABLE_HEIGHT_PT = PAGE_HEIGHT_PT - MARGIN_TOP_PT - MARGIN_BOTTOM_PT - HEADER_FOOTER_PT  # ~457pt
+
+# 기본값 (Landscape A4) — detect_orientation()이 실제 값으로 갱신
+USABLE_HEIGHT_PT = 457        # landscape 기본
+CHARS_PER_LINE = 100          # landscape 기본
 
 # 요소별 추정 높이 (pt)
 EST_H2 = 42        # H2 제목 (18pt 폰트 + before/after spacing)
@@ -55,6 +57,55 @@ EST_CODE_ROW = 16       # 코드 블록 행
 EST_INFO_BOX = 45       # 정보/경고 박스
 EST_IMAGE_SPACING = 30  # 이미지 전후 spacing
 EMU_TO_PT = 1 / 12700   # EMU → pt 변환
+DXA_TO_PT = 1 / 20      # DXA → pt 변환
+
+
+def detect_orientation(docx_path):
+    """DOCX의 w:pgSz에서 페이지 크기를 읽어 orientation과 가용 높이를 계산"""
+    try:
+        with zipfile.ZipFile(docx_path, 'r') as z:
+            tree = ET.parse(z.open('word/document.xml'))
+            root = tree.getroot()
+            body = root.find(f'{{{NS["w"]}}}body')
+            if body is None:
+                return 'landscape', 457, 100
+
+            # sectPr은 body의 마지막 자식이거나 body 안에 있음
+            sect_pr = body.find(f'{{{NS["w"]}}}sectPr')
+            if sect_pr is None:
+                return 'landscape', 457, 100
+
+            pg_sz = sect_pr.find(f'{{{NS["w"]}}}pgSz')
+            if pg_sz is None:
+                return 'landscape', 457, 100
+
+            w = int(pg_sz.get(f'{{{NS["w"]}}}w', '15840'))
+            h = int(pg_sz.get(f'{{{NS["w"]}}}h', '12240'))
+
+            # margin 읽기
+            pg_mar = sect_pr.find(f'{{{NS["w"]}}}pgMar')
+            margin_top = 1080  # 기본값
+            margin_bottom = 1080
+            if pg_mar is not None:
+                margin_top = int(pg_mar.get(f'{{{NS["w"]}}}top', '1080'))
+                margin_bottom = int(pg_mar.get(f'{{{NS["w"]}}}bottom', '1080'))
+
+            # orientation 판정: w > h → landscape
+            orientation = 'portrait' if w <= h else 'landscape'
+
+            # 가용 높이 계산 (DXA → pt)
+            page_height_pt = h * DXA_TO_PT
+            margin_top_pt = margin_top * DXA_TO_PT
+            margin_bottom_pt = margin_bottom * DXA_TO_PT
+            usable = page_height_pt - margin_top_pt - margin_bottom_pt - HEADER_FOOTER_PT
+
+            # 글자 수/줄 추정 (콘텐츠 너비 기준)
+            content_width_dxa = w - 1440 - 1440  # 좌우 여백 각 1440 DXA
+            chars_per_line = max(40, int(content_width_dxa / 130))  # 약 130 DXA/글자
+
+            return orientation, round(usable), chars_per_line
+    except Exception:
+        return 'landscape', 457, 100
 
 
 # ============================================================
@@ -167,9 +218,15 @@ def get_image_size_pt(p):
 
 def analyze_document(docx_path):
     """DOCX 문서 분석 → 요소 흐름 리스트 + 메타 정보"""
+    global USABLE_HEIGHT_PT, CHARS_PER_LINE
     if not os.path.exists(docx_path):
         print(f"[ERROR] 파일을 찾을 수 없습니다: {docx_path}")
         sys.exit(1)
+
+    # 페이지 크기 자동 감지
+    orientation, usable_h, chars_line = detect_orientation(docx_path)
+    USABLE_HEIGHT_PT = usable_h
+    CHARS_PER_LINE = chars_line
 
     report = {
         'file': os.path.basename(docx_path),
@@ -287,8 +344,8 @@ def analyze_document(docx_path):
 
                 # 일반 텍스트
                 else:
-                    # 긴 텍스트는 줄바꿈 추정 (landscape A4 약 100자/줄)
-                    line_count = max(1, len(text) / 80) if text else 1
+                    # 긴 텍스트는 줄바꿈 추정 (글자수/줄은 orientation에 따라 다름)
+                    line_count = max(1, len(text) / max(1, CHARS_PER_LINE * 0.8)) if text else 1
                     est_h = EST_PARAGRAPH * line_count
                     elem = {'type': 'paragraph', 'text': text[:40], 'index': idx, 'est_height': round(est_h, 1)}
                     report['elements'].append(elem)

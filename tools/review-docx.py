@@ -34,16 +34,15 @@ W = NS['w']
 # ============================================================
 # 상수
 # ============================================================
-# Landscape A4 전체 테이블 너비 (DXA) — professional 템플릿 기준
+# 기본값 (Landscape A4) — detect_content_width()가 실제 값으로 갱신
 TOTAL_TABLE_WIDTH_DXA = 12960
+USABLE_HEIGHT_PT = 457
 
 # Malgun Gothic 9pt 기준 글자 너비 추정 (DXA)
 DXA_PER_HANGUL = 180     # 한글 1글자 ~180 DXA
 DXA_PER_LATIN = 90       # 라틴/숫자 1글자 ~90 DXA
-CELL_PADDING_DXA = 120   # 셀 좌우 패딩 합계
-
-# 페이지 레이아웃 (validate-docx.py와 동일)
-USABLE_HEIGHT_PT = 457
+CELL_PADDING_DXA = 240   # 셀 좌우 패딩 합계 (left:120 + right:120)
+BOLD_WIDTH_FACTOR = 1.15 # 볼드 텍스트 너비 보정 (헤더용)
 EST_H2 = 42
 EST_H3 = 34
 EST_H4 = 28
@@ -139,6 +138,51 @@ def get_image_size_pt(p):
         if cx > 0 and cy > 0:
             return (cx * EMU_TO_PT, cy * EMU_TO_PT)
     return None
+
+
+# ============================================================
+# 페이지 크기 자동 감지
+# ============================================================
+
+def detect_content_width(docx_path):
+    """DOCX pgSz에서 콘텐츠 너비(DXA)와 가용 높이(pt)를 계산"""
+    try:
+        with zipfile.ZipFile(docx_path, 'r') as z:
+            tree = ET.parse(z.open('word/document.xml'))
+            root = tree.getroot()
+            body = root.find(f'{{{W}}}body')
+            if body is None:
+                return 12960, 457
+
+            sect_pr = body.find(f'{{{W}}}sectPr')
+            if sect_pr is None:
+                return 12960, 457
+
+            pg_sz = sect_pr.find(f'{{{W}}}pgSz')
+            if pg_sz is None:
+                return 12960, 457
+
+            w = int(pg_sz.get(f'{{{W}}}w', '15840'))
+            h = int(pg_sz.get(f'{{{W}}}h', '12240'))
+
+            pg_mar = sect_pr.find(f'{{{W}}}pgMar')
+            margin_left = 1440
+            margin_right = 1440
+            margin_top = 1080
+            margin_bottom = 1080
+            if pg_mar is not None:
+                margin_left = int(pg_mar.get(f'{{{W}}}left', '1440'))
+                margin_right = int(pg_mar.get(f'{{{W}}}right', '1440'))
+                margin_top = int(pg_mar.get(f'{{{W}}}top', '1080'))
+                margin_bottom = int(pg_mar.get(f'{{{W}}}bottom', '1080'))
+
+            content_width = w - margin_left - margin_right
+            page_height_pt = h / 20  # DXA → pt
+            usable_height = page_height_pt - (margin_top / 20) - (margin_bottom / 20) - 30  # 30pt header/footer
+
+            return content_width, round(usable_height)
+    except Exception:
+        return 12960, 457
 
 
 # ============================================================
@@ -263,6 +307,24 @@ def analyze_table_widths(tbl, table_index, section_heading):
             'emptyRatio': round(empty_ratio, 2),
         })
 
+    # 헤더 텍스트 오버플로우 감지 (헤더는 볼드 → 폭 보정)
+    for i, col in enumerate(columns):
+        header_text = col['header']
+        header_width = int(estimate_text_width_dxa(header_text) * BOLD_WIDTH_FACTOR)
+        usable = max(col['allocatedWidth'] - CELL_PADDING_DXA, 1)
+        if header_width > usable:
+            overflow = header_width - usable
+            issues.append({
+                'type': 'HEADER_OVERFLOW',
+                'severity': 'SUGGEST',
+                'message': f"헤더 '{header_text}' 텍스트({header_width} DXA)가 "
+                           f"가용 너비({usable} DXA)를 {overflow} DXA 초과 — 줄바꿈 발생",
+                'col': i,
+                'headerWidth': header_width,
+                'usable': usable,
+                'minAlloc': header_width + CELL_PADDING_DXA,
+            })
+
     # 불균형 감지
     for i, col in enumerate(columns):
         # WIDTH_IMBALANCE: 한 컬럼이 2줄 이상 AND 인접 컬럼이 50% 미만 활용
@@ -303,12 +365,17 @@ def analyze_table_widths(tbl, table_index, section_heading):
                 'message': f"'{col['header']}' 컬럼의 {col['emptyRatio']*100:.0f}% 행이 비어있음",
             })
 
-    # 너비 재분배 제안 (WIDTH_IMBALANCE가 있을 때만)
+    # 너비 재분배 제안 (WIDTH_IMBALANCE 또는 HEADER_OVERFLOW가 있을 때)
     suggested_widths = None
-    if any(iss['type'] == 'WIDTH_IMBALANCE' for iss in issues):
+    has_width_issue = any(iss['type'] in ('WIDTH_IMBALANCE', 'HEADER_OVERFLOW') for iss in issues)
+    if has_width_issue:
         ideals = []
-        for col in columns:
-            ideal = max(MIN_READABLE_WIDTH_DXA, int(col['maxTextWidth'] * 1.2) + CELL_PADDING_DXA)
+        for i, col in enumerate(columns):
+            # 데이터 기반 ideal
+            data_ideal = int(col['maxTextWidth'] * 1.2) + CELL_PADDING_DXA
+            # 헤더 기반 최소 (볼드 보정)
+            header_min = int(estimate_text_width_dxa(col['header']) * BOLD_WIDTH_FACTOR) + CELL_PADDING_DXA
+            ideal = max(MIN_READABLE_WIDTH_DXA, data_ideal, header_min)
             ideals.append(ideal)
         total_ideal = sum(ideals)
         if total_ideal > 0:
@@ -322,7 +389,7 @@ def analyze_table_widths(tbl, table_index, section_heading):
                 suggested_widths[max_idx] += diff
 
             for iss in issues:
-                if iss['type'] == 'WIDTH_IMBALANCE':
+                if iss['type'] in ('WIDTH_IMBALANCE', 'HEADER_OVERFLOW'):
                     iss['suggestedWidths'] = suggested_widths
 
     if not issues and not columns:
@@ -710,9 +777,13 @@ def check_table_readability(table_analyses):
 
 def analyze_docx(docx_path, config_path=None):
     """DOCX 전체 분석 → 구조화된 결과"""
+    global TOTAL_TABLE_WIDTH_DXA, USABLE_HEIGHT_PT
     if not os.path.exists(docx_path):
         print(f"[ERROR] 파일을 찾을 수 없습니다: {docx_path}", file=sys.stderr)
         sys.exit(1)
+
+    # 페이지 크기 자동 감지
+    TOTAL_TABLE_WIDTH_DXA, USABLE_HEIGHT_PT = detect_content_width(docx_path)
 
     result = {
         'file': os.path.basename(docx_path),

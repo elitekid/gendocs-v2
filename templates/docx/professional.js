@@ -67,6 +67,12 @@ function createTemplate(theme = {}) {
   const _SIZES = { ...DEFAULT_SIZES, ...(theme.sizes || {}) };
   const _SYNTAX = { ...DEFAULT_SYNTAX, ...(theme.syntax || {}) };
 
+  // Orientation support: 'landscape' (default) or 'portrait'
+  const _orientation = theme.orientation || 'landscape';
+  const _isPortrait = _orientation === 'portrait';
+  const _contentWidth = _isPortrait ? 9360 : 12960;  // DXA
+  const _rightTab = _isPortrait ? 9900 : 13500;
+
   // Derived values
   const _border = { style: BorderStyle.SINGLE, size: 1, color: _COLORS.border };
   const _borders = { top: _border, bottom: _border, left: _border, right: _border };
@@ -104,7 +110,9 @@ function createTemplate(theme = {}) {
 
   const _pageSettings = {
     page: {
-      size: { width: 15840, height: 12240 },
+      size: _isPortrait
+        ? { width: 12240, height: 15840 }   // Portrait A4
+        : { width: 15840, height: 12240 },   // Landscape A4
       margin: { top: 1080, right: 1440, bottom: 1080, left: 1440 }
     }
   };
@@ -376,7 +384,7 @@ function createTemplate(theme = {}) {
         },
         shading: codeShading,
         margins: { top: 30, bottom: 30, left: 200, right: 200 },
-        width: { size: 12960, type: WidthType.DXA },
+        width: { size: _contentWidth, type: WidthType.DXA },
         children: [new Paragraph({
           children: [new TextRun({
             text: line || " ",
@@ -389,7 +397,7 @@ function createTemplate(theme = {}) {
     }));
     return new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
-      columnWidths: [12960],
+      columnWidths: [_contentWidth],
       rows
     });
   }
@@ -411,13 +419,13 @@ function createTemplate(theme = {}) {
 
     return new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
-      columnWidths: [12960],
+      columnWidths: [_contentWidth],
       rows: [new TableRow({
         children: [new TableCell({
           borders: { top: blockBorder, bottom: blockBorder, left: blockBorder, right: blockBorder },
           shading: blockShading,
           margins: { top: 100, bottom: 100, left: 200, right: 200 },
-          width: { size: 12960, type: WidthType.DXA },
+          width: { size: _contentWidth, type: WidthType.DXA },
           children: paragraphs
         })]
       })]
@@ -439,13 +447,13 @@ function createTemplate(theme = {}) {
 
     return new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
-      columnWidths: [12960],
+      columnWidths: [_contentWidth],
       rows: [new TableRow({
         children: [new TableCell({
           borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder },
           shading: { fill: _COLORS.jsonBg, type: ShadingType.CLEAR },
           margins: { top: 100, bottom: 100, left: 200, right: 200 },
-          width: { size: 12960, type: WidthType.DXA },
+          width: { size: _contentWidth, type: WidthType.DXA },
           children: paragraphs
         })]
       })]
@@ -548,13 +556,13 @@ function createTemplate(theme = {}) {
 
     return new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
-      columnWidths: [12960],
+      columnWidths: [_contentWidth],
       rows: [new TableRow({
         children: [new TableCell({
           borders: { top: codeBorder, bottom: codeBorder, left: codeBorder, right: codeBorder },
           shading: darkBg,
           margins: { top: 150, bottom: 150, left: 200, right: 200 },
-          width: { size: 12960, type: WidthType.DXA },
+          width: { size: _contentWidth, type: WidthType.DXA },
           children: paragraphs
         })]
       })]
@@ -647,7 +655,7 @@ function createTemplate(theme = {}) {
   // ============================================================
 
   function createDocument(children, docInfo = null) {
-    const rightTabPosition = 13500;
+    const rightTabPosition = _rightTab;
 
     const sectionProps = {
       properties: _pageSettings,
