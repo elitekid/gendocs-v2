@@ -1,0 +1,20 @@
+{
+  "docConfig": "test-diag-03-db",
+  "capturedAt": "2026-02-20",
+  "stats": {
+    "headings": 10,
+    "headingsByLevel": {
+      "h2": 5,
+      "h3": 5
+    },
+    "bullets": 0,
+    "tables": 5,
+    "codeBlocks": 1,
+    "infoBoxes": 0,
+    "images": 1,
+    "pageBreaks": 4,
+    "estimatedPages": 7
+  },
+  "warnCount": 0,
+  "infoCount": 0
+}

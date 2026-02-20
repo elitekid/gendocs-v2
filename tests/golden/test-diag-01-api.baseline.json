@@ -1,0 +1,20 @@
+{
+  "docConfig": "test-diag-01-api",
+  "capturedAt": "2026-02-20",
+  "stats": {
+    "headings": 9,
+    "headingsByLevel": {
+      "h2": 4,
+      "h3": 5
+    },
+    "bullets": 0,
+    "tables": 7,
+    "codeBlocks": 2,
+    "infoBoxes": 0,
+    "images": 2,
+    "pageBreaks": 5,
+    "estimatedPages": 8
+  },
+  "warnCount": 0,
+  "infoCount": 0
+}

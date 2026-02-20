@@ -22,9 +22,9 @@ gendocs는 **마크다운(MD)을 원본으로, 모든 형태의 비즈니스 문
 ### 시각 자료 (Visual)
 | 포맷 | 확장자 | 기술 스택 | 용도 | 상태 |
 |------|--------|-----------|------|------|
-| **시퀀스 다이어그램** | .png | Python + `matplotlib` | 시스템 간 통신 흐름도 | 검증 완료 |
-| **아키텍처 다이어그램** | .png/.svg | Python + `matplotlib` / `diagrams` | 시스템 구성도, 인프라 구조도 | 예정 |
-| **ERD / 플로우차트** | .png/.svg | Python + `matplotlib` / Mermaid | DB 설계, 업무 흐름 | 예정 |
+| **Mermaid 다이어그램** | .png | Node.js + `@mermaid-js/mermaid-cli` | 시퀀스, 플로우차트, 상태, ER, 파이, 간트 | 검증 완료 |
+| **Graphviz 다이어그램** | .png | Node.js + `@hpcc-js/wasm-graphviz` + puppeteer | 아키텍처, 네트워크 토폴로지, 의존성 그래프 | 검증 완료 |
+| **시퀀스 다이어그램** | .png | Python + `matplotlib` | 시스템 간 통신 흐름도 (레거시) | 검증 완료 |
 
 ### 데이터 (Data)
 | 포맷 | 확장자 | 기술 스택 | 용도 | 상태 |
@@ -108,26 +108,37 @@ gendocs는 **마크다운(MD)을 원본으로, 모든 형태의 비즈니스 문
 
 **현재 상태**: 동작함. source↔config 매핑은 doc-config JSON의 `source` 필드로 관리.
 
-### Flow C. 다이어그램 포함 문서
+### Flow C. 다이어그램 포함 문서 (자동 렌더링)
 
 > 사용자: "시퀀스 다이어그램이 포함된 기술 문서 만들어줘"
 
 ```
-① templates/diagram/sequence.py 참조 → diagrams/내다이어그램.py 작성
+① source/내문서.md 에 다이어그램 코드블록 작성
+   <!-- diagram: 결제 처리 흐름 -->
+   ```mermaid
+   sequenceDiagram
+       ...
+   ```
+   또는 Graphviz DOT:
+   <!-- diagram: 시스템 아키텍처 -->
+   ```dot
+   digraph { ... }
+   ```
                     ↓
-② 실행: python diagrams/내다이어그램.py → PNG 생성
+② doc-config에 diagrams 설정
+   { "diagrams": { "enabled": true } }
                     ↓
-③ source/내문서.md 에 이미지 참조 추가
-   ![설명](examples/api-spec/1_1_CPM_결제.png)
+③ node lib/convert.js doc-configs/내문서.json
+   → 코드블록 자동 감지 → PNG 렌더링 → 이미지 참조로 치환 → DOCX 생성
                     ↓
-④ converter 작성 (lookAheadForImage 포함) → Flow A의 ③~⑤ 진행
-                    ↓
-⑤ 검증에서 이미지 배치 확인
-   - 이미지가 독립 페이지에 배치되었는지
-   - 제목+이미지가 같은 페이지에 있는지
+④ 테마 색상 자동 매핑
+   - doc-config의 theme(navy/teal/wine 등) → Mermaid/Graphviz 색상 자동 적용
+   - flowchart/stateDiagram: 3색 교대 배색 (한국어 상태명 지원)
+   - 시퀀스 다이어그램: 참여자 박스 + 노트에 테마 색상
+   - 파이 차트: 8색 팔레트 (hue 회전)
 ```
 
-**현재 상태**: 동작함. 시퀀스 다이어그램 검증 완료 (matplotlib 기반).
+**현재 상태**: 동작함. Mermaid(`mermaid-cli`) + Graphviz(`@hpcc-js/wasm-graphviz`) 자동 렌더링 + 5개 테마 색상 매핑 검증 완료.
 
 ### Flow D. 프로젝트 온보딩 (새 사용자)
 
@@ -216,12 +227,12 @@ gendocs는 **마크다운(MD)을 원본으로, 모든 형태의 비즈니스 문
 
 ### Phase 4 — 자동화 (v0.4)
 
-| 항목 | 설명 |
-|------|------|
-| 시각적 검증 | LibreOffice → PDF → 이미지 → Claude Code가 시각적으로 레이아웃 확인 |
-| MD 내 다이어그램 구문 | mermaid/flowchart 구문 감지 → 자동으로 PNG 생성 후 삽입 |
-| 배치 생성 | 여러 source 파일을 한번에 변환 |
-| 변경 감지 | source/ 파일 변경 시 자동 재생성 |
+| 항목 | 상태 | 설명 |
+|------|------|------|
+| MD 내 다이어그램 자동 렌더링 | **완료** | Mermaid/Graphviz 코드블록 → PNG 자동 생성 + 테마 색상 매핑 |
+| 시각적 검증 | **완료** | LibreOffice → PDF → 이미지 → 빈 페이지 감지 |
+| 배치 생성 | 미완 | 여러 source 파일을 한번에 변환 |
+| 변경 감지 | 미완 | source/ 파일 변경 시 자동 재생성 |
 
 ---
 
@@ -241,6 +252,7 @@ gendocs/
 ├── lib/                             ← [v0.2] Generic Converter 엔진
 │   ├── converter-core.js            ← 공통 변환 로직 (파싱, 너비 계산, 변환, 빌드)
 │   ├── convert.js                   ← 진입점: node lib/convert.js <config.json>
+│   ├── diagram-renderer.js          ← [v0.4] 다이어그램 자동 렌더링 (Mermaid/Graphviz + 테마 매핑)
 │   ├── scoring.js                   ← [v0.4] 다차원 품질 점수 계산 (순수 함수 모듈)
 │   ├── patterns.json                ← [v0.3] 공유 패턴 DB (tableWidths common/byDocType)
 │   └── reflections.json             ← [v0.4] 에피소딕 메모리 (교정 경험 저장)
@@ -526,6 +538,62 @@ python -X utf8 tools/extract-docx.py output/문서.docx --json
 | `warningBox` | 배경색 #FEF6E6, 단일 컬럼 |
 | `listItem` | ListParagraph 스타일 |
 | `paragraph` | 일반 텍스트 |
+
+---
+
+## 다이어그램 자동 렌더링
+
+### 개요
+
+MD 내 다이어그램 코드블록(`mermaid`, `dot`, `graphviz`)을 자동으로 PNG로 렌더링하여 문서에 삽입한다. `<!-- diagram: 설명 -->` 주석이 있는 코드블록만 렌더링 (opt-in).
+
+**핵심 파일**: `lib/diagram-renderer.js`
+
+### 지원 렌더러
+
+| 렌더러 | 언어 태그 | 엔진 | 다이어그램 유형 |
+|--------|-----------|------|----------------|
+| Mermaid | `mermaid` | `@mermaid-js/mermaid-cli` (mmdc) | 시퀀스, 플로우차트, 상태, ER, 파이, 간트, 클래스 |
+| Graphviz | `dot`, `graphviz` | `@hpcc-js/wasm-graphviz` + puppeteer(SVG→PNG) | 아키텍처, 네트워크, 의존성 그래프 |
+
+### 사용법
+
+```markdown
+<!-- diagram: 결제 처리 시퀀스 -->
+```mermaid
+sequenceDiagram
+    고객->>서버: 결제 요청
+    서버-->>고객: 응답
+```
+
+<!-- diagram: 시스템 구조 -->
+```dot
+digraph { A -> B -> C }
+```
+```
+
+doc-config에 `diagrams` 설정:
+```json
+{ "diagrams": { "enabled": true, "width": 1024, "scale": 2 } }
+```
+
+### 테마 색상 매핑
+
+doc-config의 `theme` 설정(navy-professional 등)이 다이어그램 색상에 자동 매핑된다.
+
+- **Mermaid**: `buildMermaidConfig()` → themeVariables JSON config 파일 생성 → `mmdc -c` 플래그
+- **Graphviz**: `injectGraphvizTheme()` → DOT 소스에 node/edge 속성 주입
+- **다색 배색**: flowchart/stateDiagram 노드에 3색 교대 (primary/secondary/tertiary)
+  - flowchart: `classDef` + `class` 구문 자동 주입
+  - stateDiagram (ASCII): `class` 구문, (한국어): `:::className` 인라인 구문
+- 사용자가 직접 `classDef`/`fillcolor`를 지정한 경우 → 건드리지 않음
+
+### 하위 호환
+
+- `<!-- diagram: -->` 주석이 없는 mermaid/dot 코드블록 → 일반 코드블록으로 변환 (기존 동작)
+- `diagrams.enabled: false` → 다이어그램 렌더링 스킵
+- `diagrams.theme` 명시 시 → Mermaid 기본 테마 사용 (gendocs 테마 매핑 비활성)
+- 테마 없이 사용 → Mermaid 기본 테마 (연보라색)
 
 ---
 
