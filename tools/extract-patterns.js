@@ -16,9 +16,15 @@ const fs = require('fs');
 const path = require('path');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const DOC_CONFIGS_DIR = path.join(PROJECT_ROOT, 'doc-configs');
 const PATTERNS_PATH = path.join(PROJECT_ROOT, 'lib', 'patterns.json');
 const SCORES_DIR = path.join(PROJECT_ROOT, 'tests', 'scores');
+
+// --dir 플래그: doc-configs 디렉토리 지정 (기본: doc-configs/)
+const args = process.argv.slice(2);
+const dirIdx = args.indexOf('--dir');
+const DOC_CONFIGS_DIR = dirIdx >= 0 && args[dirIdx + 1]
+  ? path.resolve(args[dirIdx + 1])
+  : path.join(PROJECT_ROOT, 'doc-configs');
 
 const COMMON_THRESHOLD = 3; // 3개 이상이면 common 승격
 const QUALITY_GATE = 7.0;   // common 승격 시 평균 점수 게이트

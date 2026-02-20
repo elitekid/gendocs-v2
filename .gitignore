@@ -38,6 +38,9 @@ lib/patterns.json
 test-input/
 test-sources/
 
+# Experiment data (Sprint 7)
+experiment/
+
 # Company example (kept locally)
 examples/api-spec/
 examples/hipass-batch/
