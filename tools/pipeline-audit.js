@@ -296,7 +296,7 @@ function auditDocument(configPath, options = {}) {
   // ⑤ score
   if (stages.convert && stages.convert.success && stages.validate && !stages.validate.error) {
     const contentResult = scoring.scoreContent(stages.review);
-    const layoutResult = scoring.scoreLayout(stages.validate);
+    const layoutResult = scoring.scoreLayout(stages.validate, stages.review);
     const tableResult = scoring.scoreTable(stages.review);
     const codeResult = scoring.scoreCode(stages.review);
     const structureResult = scoring.scoreStructure(stages.validate, stages.review);

@@ -87,7 +87,7 @@ function scoreDocument(configPath, options = {}) {
 
   // 점수 산출
   const contentResult = scoring.scoreContent(reviewJson);
-  const layoutResult = scoring.scoreLayout(validateJson);
+  const layoutResult = scoring.scoreLayout(validateJson, reviewJson);
   const tableResult = scoring.scoreTable(reviewJson);
   const codeResult = scoring.scoreCode(reviewJson);
   const structureResult = scoring.scoreStructure(validateJson, reviewJson);

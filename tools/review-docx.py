@@ -1,5 +1,5 @@
 """
-DOCX AI 셀프리뷰 스크립트 — 컬럼 너비 불균형, 콘텐츠 정합성, 테이블 가독성, 코드 무결성, 페이지 분포, 제목 구조 검사.
+DOCX AI 셀프리뷰 스크립트 — 컬럼 너비 불균형, 콘텐츠 정합성, 테이블 가독성, 코드 무결성, 이미지 비율, 페이지 분포, 제목 구조 검사.
 
 사용법:
   python -X utf8 tools/review-docx.py output/문서.docx --json
@@ -65,6 +65,8 @@ EMPTY_COL_THRESHOLD = 0.80         # 80% 이상 행이 빈 컬럼
 MAX_COLUMNS = 8                    # 가로 A4에서 읽기 어려운 컬럼 수
 SPARSE_PAGE_PCT = 15.0             # 15% 미만 채움률
 MIN_READABLE_WIDTH_DXA = 600       # 최소 가독 너비
+MIN_IMAGE_WIDTH_PCT = 0.30         # 이미지 최소 폭 (콘텐츠 너비의 30% 미만 → WARN)
+MIN_IMAGE_HEIGHT_PT = 80           # 이미지 최소 높이 80pt (약 28mm, 이하 → WARN)
 
 
 # ============================================================
@@ -432,6 +434,7 @@ def count_md_elements(md_path, header_clean_until=None):
 
     in_code_block = False
     in_table = False
+    prev_non_empty = ''  # 직전 비어있지 않은 줄 (다이어그램 주석 감지용)
 
     # headerCleanUntil 이전 영역 스킵 (converter가 제거하는 부분)
     in_header_area = bool(header_clean_until)
@@ -453,7 +456,11 @@ def count_md_elements(md_path, header_clean_until=None):
                 in_code_block = False
             else:
                 in_code_block = True
-                counts['codeBlocks'] += 1
+                # 다이어그램 코드블록은 이미지로 변환되므로 이미지로 카운트
+                if re.match(r'^<!--\s*diagram:', prev_non_empty):
+                    counts['images'] += 1
+                else:
+                    counts['codeBlocks'] += 1
             continue
 
         if in_code_block:
@@ -492,6 +499,10 @@ def count_md_elements(md_path, header_clean_until=None):
             counts['infoBoxes'] += 1
         elif stripped.startswith('> 주의:'):
             counts['warningBoxes'] += 1
+
+        # 직전 비어있지 않은 줄 추적 (다이어그램 주석 감지용)
+        if stripped:
+            prev_non_empty = stripped
 
     return counts
 
@@ -771,6 +782,65 @@ def check_table_readability(table_analyses):
     return issues
 
 
+def check_image_aspect_ratio(body):
+    """이미지 비율 이슈 — 다이어그램이 너무 좁게 렌더링된 경우 감지"""
+    issues = []
+    current_heading = '(문서 시작)'
+    content_width_pt = TOTAL_TABLE_WIDTH_DXA / 20  # DXA → pt
+    min_width_pt = content_width_pt * MIN_IMAGE_WIDTH_PCT
+    img_index = 0
+
+    for child in body:
+        tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+
+        if tag == 'p':
+            style = get_paragraph_style(child)
+            if style.startswith('Heading'):
+                text = extract_text(child)
+                if text:
+                    current_heading = text
+
+            img_size = get_image_size_pt(child)
+            if img_size:
+                img_index += 1
+                w_pt, h_pt = img_size
+                ratio = w_pt / h_pt if h_pt > 0 else 1.0
+
+                if w_pt < min_width_pt:
+                    pct = w_pt / content_width_pt * 100
+                    issues.append({
+                        'type': 'NARROW_IMAGE',
+                        'severity': 'WARN',
+                        'message': f'이미지 #{img_index} ({current_heading[:30]}): '
+                                   f'폭 {w_pt:.0f}pt — 페이지 너비의 {pct:.0f}%로 가독성 부족 '
+                                   f'(비율 {ratio:.2f})',
+                        'imageIndex': img_index,
+                        'section': current_heading,
+                        'width_pt': round(w_pt, 1),
+                        'height_pt': round(h_pt, 1),
+                        'aspectRatio': round(ratio, 2),
+                        'action': '다이어그램 방향 변경 (flowchart TD→LR) '
+                                  '또는 노드 그룹핑으로 가로 비율 확보',
+                    })
+                elif h_pt < MIN_IMAGE_HEIGHT_PT:
+                    issues.append({
+                        'type': 'FLAT_IMAGE',
+                        'severity': 'WARN',
+                        'message': f'이미지 #{img_index} ({current_heading[:30]}): '
+                                   f'높이 {h_pt:.0f}pt — 최소 {MIN_IMAGE_HEIGHT_PT}pt 미만으로 '
+                                   f'가독성 부족 (비율 {ratio:.2f})',
+                        'imageIndex': img_index,
+                        'section': current_heading,
+                        'width_pt': round(w_pt, 1),
+                        'height_pt': round(h_pt, 1),
+                        'aspectRatio': round(ratio, 2),
+                        'action': '노드를 복수 행으로 그룹핑 (composite state, subgraph) '
+                                  '하여 높이 확보. 단순 LR 전환만으로는 해결 불가',
+                    })
+
+    return issues
+
+
 # ============================================================
 # 메인 분석 파이프라인
 # ============================================================
@@ -965,6 +1035,13 @@ def analyze_docx(docx_path, config_path=None):
             'issues': heading_issues,
         }
 
+        # === 7. 이미지 비율 ===
+        image_issues = check_image_aspect_ratio(body)
+        result['checks']['imageAspectRatio'] = {
+            'status': 'WARN' if image_issues else 'OK',
+            'issues': image_issues,
+        }
+
     # === 전체 요약 ===
     for check_name, check_data in result['checks'].items():
         if isinstance(check_data, dict) and 'issues' in check_data:
@@ -1037,6 +1114,16 @@ def print_report(result):
         print(f'{sep}')
         for iss in ci['issues']:
             print(f'  [{iss["severity"]}] {iss["message"]}')
+
+    # 이미지 비율
+    ia = checks.get('imageAspectRatio', {})
+    if ia.get('issues'):
+        print(f'\n{sep}')
+        print(f'  이미지 비율 [{ia.get("status", "?")}]')
+        print(f'{sep}')
+        for iss in ia['issues']:
+            print(f'  [{iss["severity"]}] {iss["message"]}')
+            print(f'    → {iss["action"]}')
 
     # 페이지 분포
     pd = checks.get('pageDistribution', {})

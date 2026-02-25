@@ -162,6 +162,56 @@ PDF는 DOCX와 달리 heading level, 테이블 구조 등의 메타데이터가 
 - 이미지: `![설명](경로)`
 - 흐름도: `**Step 1**: 설명` 형식
 
+### 다이어그램 자동 삽입 규칙
+
+MD를 생성할 때, 아래 유형의 내용이 있으면 **다이어그램 코드블록을 자동으로 포함**하세요. 텍스트로만 설명하는 것보다 시각 자료가 문서 품질을 크게 높입니다.
+
+**삽입 판단 기준** — 다음 중 하나에 해당하면 다이어그램을 넣으세요:
+
+| 문서 내용 | 다이어그램 유형 | 렌더러 |
+|-----------|----------------|--------|
+| API 호출 흐름, 시스템 간 통신 | `sequenceDiagram` | Mermaid |
+| 처리 절차, 분기 로직, 의사결정 | `flowchart` | Mermaid |
+| 상태 변화 (주문 상태, 승인 흐름 등) | `stateDiagram-v2` | Mermaid |
+| 데이터 모델, 테이블 관계 | `erDiagram` | Mermaid |
+| 일정, 마일스톤 | `gantt` | Mermaid |
+| 클래스 구조, 모듈 관계 | `classDiagram` | Mermaid |
+| 시스템 아키텍처, 계층 구조 | `digraph` | Graphviz (dot) |
+| 네트워크 토폴로지, 인프라 구성 | `digraph` / `graph` | Graphviz (dot) |
+| 모듈/패키지 의존성 | `digraph` | Graphviz (dot) |
+
+**작성 형식** — 반드시 `<!-- diagram: 설명 -->` 주석을 코드블록 바로 위에 추가하세요. 이 주석이 없으면 일반 코드블록으로 취급되어 렌더링되지 않습니다:
+
+```markdown
+### 1.1 결제 처리 흐름
+
+아래는 결제 요청부터 완료까지의 처리 흐름입니다.
+
+<!-- diagram: 결제 처리 시퀀스 -->
+```mermaid
+sequenceDiagram
+    고객->>API서버: 결제 요청
+    API서버->>결제모듈: 승인 요청
+    결제모듈-->>API서버: 승인 결과
+    API서버-->>고객: 처리 완료
+```
+```
+
+**삽입하지 않는 경우**:
+- 단순 설정 목록, 파라미터 표 등 시각화 가치가 없는 경우
+- 이미 사용자가 제공한 이미지(`![](path)`)가 해당 내용을 충분히 설명하는 경우
+- 다이어그램으로 표현하기에 데이터가 부족한 경우 (노드 2개 이하)
+
+**프로젝트 소스 분석 시 다이어그램 소재 찾기**:
+
+프로젝트 코드를 분석하여 문서를 생성하는 경우, 다음을 적극적으로 탐색하세요:
+- 컨트롤러/라우터 → API 호출 흐름 (sequenceDiagram)
+- DB 모델/엔티티 → ERD (erDiagram)
+- 상태 enum/상수 → 상태 다이어그램 (stateDiagram-v2)
+- 디렉토리 구조/모듈 import → 아키텍처/의존성 (Graphviz digraph)
+- 미들웨어 체인/파이프라인 → 처리 흐름 (flowchart)
+- 설정 파일(docker-compose, k8s 등) → 인프라 구성 (Graphviz digraph)
+
 ---
 
 ## 셀프리뷰 (필수 게이트 — 생략 금지)
@@ -326,9 +376,12 @@ doc-config JSON에 포함할 내용:
   "tableWidths": { "헤더1|헤더2|헤더3": [w1, w2, w3], ... },
   "pageBreaks": { ... },
   "images": { "basePath": "...", "sectionMap": { ... } },
+  "diagrams": { "enabled": true },
   "style": { "colors": { "accent": "FF6B35" } }
 }
 ```
+
+> **다이어그램 설정**: source MD에 `<!-- diagram: -->` 주석이 포함된 코드블록이 있으면 `"diagrams": { "enabled": true }`를 반드시 포함하세요. 다이어그램이 없으면 이 필드를 생략해도 됩니다.
 
 > `_meta.createdBy`: `/gendocs` 스킬로 생성 시 `"ai"`, 사용자가 수작업으로 작성 시 `"human"`. 패턴 붕괴 방지를 위한 출처 추적에 사용.
 
@@ -446,6 +499,47 @@ STOP_PLATEAU, STOP_OSCILLATION, STOP_MAX 판정 시:
 - **INFO는 수정하지 않음** (고아 제목 등은 시뮬레이션 추정치이므로 실제 Word 렌더링과 다를 수 있음)
 - 수정: doc-config JSON의 `pageBreaks`, `tableWidths` 등을 조정
 - 일괄 패턴 매칭으로 break를 넣지 말 것 (특정 위치만 수정)
+
+### FIX: NARROW_IMAGE / FLAT_IMAGE (다이어그램 비율 이상)
+
+review-docx.py가 `NARROW_IMAGE` 또는 `FLAT_IMAGE` WARN을 보고하면 해당 다이어그램의 **source MD 코드블록을 수정**하세요:
+
+**권장 해결법: Graphviz DOT `rankdir=TB` + `rank=same` 다행 그리드**
+
+선형 프로세스 흐름(8개+ 노드 체인)은 **Mermaid가 아닌 Graphviz DOT으로 전환**하세요. Mermaid의 `subgraph direction` 키워드는 렌더링에 반영되지 않는 경우가 많아 비율 제어가 불안정합니다.
+
+```dot
+digraph process {
+    rankdir=TB
+    node [shape=box, style="rounded,filled", fillcolor="#E8F0F7", fontname="Malgun Gothic", fontsize=10, margin="0.3,0.15", penwidth=1.8]
+    edge [fontname="Malgun Gothic", fontsize=9, penwidth=1.2]
+
+    {rank=same; A; B; C}       /* 행 1 */
+    {rank=same; D; E; F}       /* 행 2 */
+    {rank=same; G; H; I}       /* 행 3 */
+
+    A -> B -> C
+    C -> D                     /* 행 간 연결 */
+    D -> E -> F
+    F -> G
+    G -> H -> I
+}
+```
+
+**행 분배 기준**: 노드 9개 → 3행×3열, 노드 12개 → 3행×4열, 분기 있으면 분기점 기준으로 행 분리
+
+| 이슈 | 원인 | 수정 방법 |
+|------|------|----------|
+| NARROW_IMAGE | Mermaid `flowchart TD` / `stateDiagram` 직선 체인 | **Graphviz DOT으로 전환** + `rank=same`으로 다행 배치 |
+| NARROW_IMAGE | Graphviz `rankdir=TB` 직선 | `rank=same`으로 노드를 3~5개씩 같은 행에 배치 |
+| FLAT_IMAGE | Mermaid `flowchart LR` / `direction LR` 직선 체인 | **Graphviz DOT으로 전환** + `rankdir=TB` + `rank=same` 3행 |
+| FLAT_IMAGE | Graphviz `rankdir=LR` 노드 과다 | `rankdir=TB`로 변경 + `rank=same`으로 행 분리 |
+
+> **핵심**: Mermaid `subgraph direction TB/LR`은 렌더링에 반영 안 되는 경우가 빈번. 선형 체인(8개+ 노드)은 **Graphviz DOT `rankdir=TB` + `rank=same`**이 유일하게 신뢰 가능한 비율 제어 수단.
+>
+> **색상 활용**: `shape=diamond`(분기점), `fillcolor="#FFD6D6"`(거부/실패), `fillcolor="#D6FFD6"`(성공) 등으로 시각 구분 추가.
+
+> 다이어그램 방향 변경은 source MD 수정 → 재변환이 필요합니다 (doc-config만으로는 해결 불가).
 
 ### FIX 성공 후 경험 기록 (Reflexion)
 
