@@ -7,6 +7,11 @@ gendocs는 **마크다운(MD)을 원본으로, 모든 형태의 비즈니스 문
 
 > **핵심 원칙**: 이 프로젝트에서 Claude Code는 문서 생성 전문가다. 코드를 사람이 짜는 것이 아니라, Claude Code가 기존 템플릿과 예시를 참조하여 새로운 변환 스크립트를 작성하고 실행한다.
 
+## 작업 규칙 (Insights 2026-02-26 기반)
+
+1. **파일 확인 필수**: 유사한 이름의 파일이 여러 개 존재할 때(예: `source/`, `doc-configs/`, 외부 경로), 편집·변환 전에 정확한 파일 경로를 사용자에게 확인한다. 추측하여 잘못된 파일을 편집하지 않는다.
+2. **콘텐츠 범위 준수**: 소스 MD에 없는 내용을 추가·확장하지 않는다. 사용자가 "심플하게", "내용만 바꿔서" 등 범위를 제한하면 최소 산출물만 생성한다. 섹션 추가, 톤 변경, 브랜딩 변경은 명시적 요청이 있을 때만 수행한다.
+
 ---
 
 ## 지원 산출물 포맷
@@ -252,6 +257,7 @@ gendocs/
 ├── lib/                             ← [v0.2] Generic Converter 엔진
 │   ├── converter-core.js            ← 공통 변환 로직 (파싱, 너비 계산, 변환, 빌드)
 │   ├── convert.js                   ← 진입점: node lib/convert.js <config.json>
+│   ├── theme-utils.js               ← [v0.5] 테마 색상 유틸리티 (tint/shade, 12→30 파생)
 │   ├── diagram-renderer.js          ← [v0.4] 다이어그램 자동 렌더링 (Mermaid/Graphviz + 테마 매핑)
 │   ├── scoring.js                   ← [v0.4] 다차원 품질 점수 계산 (순수 함수 모듈)
 │   ├── patterns.json                ← [v0.3] 공유 패턴 DB (tableWidths common/byDocType)
@@ -265,12 +271,12 @@ gendocs/
 │
 ├── output/                          ← 생성된 최종 문서 (출력)
 │
-├── themes/                          ← 테마 프리셋 JSON (5종)
-│   ├── navy-professional.json       ← 기본 (네이비 블루)
-│   ├── slate-modern.json            ← 쿨그레이, 모던
-│   ├── teal-corporate.json          ← 티얼/그린, 기업용
-│   ├── wine-elegant.json            ← 와인/버건디, 포멀
-│   └── blue-standard.json           ← 블루 기본, 심플
+├── themes/                          ← 테마 프리셋 JSON (5종, v2 슬롯 기반)
+│   ├── office-standard.json         ← Office 2013-2022 (기본)
+│   ├── office-modern.json           ← Office 2023
+│   ├── blue-warm.json               ← Blue Warm (로열블루)
+│   ├── blue-green.json              ← Blue Green (틸)
+│   └── marquee.json                 ← Marquee (스틸블루)
 │
 ├── templates/                       ← 포맷별 문서 템플릿
 │   ├── docx/
@@ -299,6 +305,7 @@ gendocs/
 │   └── scores/                      ← [v0.4] 품질 점수 히스토리 (문서별 시계열)
 │
 └── tools/                           ← 검증·디버그·유틸리티
+    ├── theme_colors.py              ← [v0.5] 테마 색상 동적 로드 (검증 도구 공유 모듈)
     ├── validate-docx.py             ← [핵심] DOCX 구조 검증 + 레이아웃 분석 (--json 지원)
     ├── extract-docx.py              ← [핵심] DOCX 텍스트 추출 (ZIP+XML, 의존성 없음, --json 지원)
     ├── regression-test.js           ← [v0.3] 회귀 테스트 (baseline 비교)
@@ -428,18 +435,26 @@ if (line.startsWith('### ')) {
 ### 개요
 
 DOCX 스타일(색상, 폰트, 크기)을 JSON 테마 파일로 분리하여 문서마다 다른 색상/폰트를 적용할 수 있다.
+Word 표준 12슬롯(dk1/lt1/dk2/lt2/accent1-6/hlink/folHlink)에서 30키 colors를 자동 파생하는 v2 구조.
 
-**Fallback 체인**: `doc-config "style"` > `theme JSON` > `템플릿 DEFAULT`
+**Fallback 체인**: `doc-config "style"` > `theme JSON (slots → colors 파생)` > `템플릿 DEFAULT`
 
-### 프리셋 테마 (5종)
+### 프리셋 테마 (5종, Office 표준 팔레트)
 
-| 파일 | 이름 | 주색상 | 설명 |
-|------|------|--------|------|
-| `themes/navy-professional.json` | Navy Professional | #1B3664 | 기본 (기존 스타일과 동일) |
-| `themes/slate-modern.json` | Slate Modern | #2D3748 | 쿨그레이, 모던 |
-| `themes/teal-corporate.json` | Teal Corporate | #0D6E6E | 티얼/그린, 기업 문서용 |
-| `themes/wine-elegant.json` | Wine Elegant | #6B2D3E | 와인/버건디, 포멀 |
-| `themes/blue-standard.json` | Blue Standard | #1F4E79 | 블루 기본, 심플 |
+| 파일 | 이름 | 팔레트 출처 | dk2 (primary) | 용도 |
+|------|------|-----------|---------------|------|
+| `themes/office-standard.json` | Office Standard | Office 2013-2022 | #44546A | 기본 (가장 보편적) |
+| `themes/office-modern.json` | Office Modern | Office 2023 | #0E2841 | 최신 트렌드 |
+| `themes/blue-warm.json` | Blue Warm | Blue Warm | #242852 | 로열블루, 격식 |
+| `themes/blue-green.json` | Blue Green | Blue Green | #373545 | 틸, 기업용 |
+| `themes/marquee.json` | Marquee | Marquee | #5E5E5E | 스틸블루, 모던 |
+
+**기존 테마명 호환**: converter-core.js의 THEME_ALIASES가 자동 매핑
+- `navy-professional` → `office-standard`
+- `blue-standard` → `office-modern`
+- `teal-corporate` → `blue-green`
+- `slate-modern` → `marquee`
+- `wine-elegant` → `blue-warm`
 
 ### doc-config에서 사용
 
@@ -447,7 +462,7 @@ DOCX 스타일(색상, 폰트, 크기)을 JSON 테마 파일로 분리하여 문
 {
   "source": "source/my-doc.md",
   "template": "professional",
-  "theme": "teal-corporate",
+  "theme": "office-standard",
   "style": {
     "colors": { "accent": "FF6B35" }
   },
@@ -455,56 +470,81 @@ DOCX 스타일(색상, 폰트, 크기)을 JSON 테마 파일로 분리하여 문
 }
 ```
 
-- `"theme"` 생략 → 템플릿 기본값 (navy-professional 색상)
+- `"theme"` 생략 → 템플릿 기본값
 - `"style"` 생략 → 테마 그대로
 - 둘 다 생략 → 현재와 100% 동일 (하위 호환)
+- 기존 테마명(`navy-professional` 등) 사용 가능 (자동 매핑)
 
-### 테마 JSON 구조
+### 테마 JSON 구조 (v2)
 
 ```json
 {
-  "name": "theme-name",
-  "displayName": "표시 이름",
-  "colors": {
-    "primary": "1B3664", "secondary": "2B5598", "accent": "F5A623",
-    "text": "333333", "textLight": "666666", "textDark": "404040",
-    "white": "FFFFFF", "border": "CCCCCC", "altRow": "F2F2F2",
-    "codeDarkBg": "1E1E1E", "codeDarkBorder": "3C3C3C",
-    "infoBox": "E8F4FD", "infoBoxBorder": "1B3664",
-    "warningBox": "FEF6E6", "warningBoxBorder": "F5A623", "warningBoxText": "8B4513",
-    "inlineCode": "555555", "headerFooter": "666666",
-    "jsonBg": "F5F5F5", "flowBoxBorder": "666666", "flowBoxBg": "F5F5F5"
+  "name": "office-standard",
+  "displayName": "Office Standard",
+  "version": 2,
+  "slots": {
+    "dk1": "000000", "lt1": "FFFFFF",
+    "dk2": "44546A", "lt2": "E7E6E6",
+    "accent1": "4472C4", "accent2": "ED7D31",
+    "accent3": "A5A5A5", "accent4": "FFC000",
+    "accent5": "5B9BD5", "accent6": "70AD47",
+    "hlink": "0563C1", "folHlink": "954F72"
   },
   "fonts": { "default": "Malgun Gothic", "code": "Consolas" },
-  "sizes": { "title": 48, "subtitle": 26, "h1": 28, "h2": 24, "h3": 22, "h4": 20, "body": 20, "small": 18, "code": 16 },
-  "syntax": { "keyword": "569CD6", "type": "4EC9B0", "string": "CE9178", "comment": "6A9955", "default": "D4D4D4" }
+  "sizes": { ... },
+  "syntax": { ... },
+  "overrides": {}
 }
 ```
 
+- `slots` — Word 12슬롯이 색상의 소스 오브 트루스
+- `overrides` — 파생 결과를 부분적으로 덮어쓸 수 있음 (예: `codeDarkBg` 고정)
+- `version: 2` — v1(기존 `colors` 30키)과 구분
+
+### 12슬롯 → 30키 파생 매핑
+
+| 파생 키 | 소스 | 변환 |
+|---------|------|------|
+| primary | dk2 | 직접 |
+| secondary | accent1 | 직접 |
+| accent | accent2 | 직접 |
+| text | dk1 | 직접 |
+| white | lt1 | 직접 |
+| altRow | lt2 | 직접 |
+| textLight | dk1 | tint 50% |
+| border | dk2 | tint 70% |
+| infoBox | dk2 | tint 85% |
+| warningBox | accent2 | tint 88% |
+| codeDarkBg | — | 고정 1E1E1E |
+| codeDarkBorder | — | 고정 3C3C3C |
+
+핵심 함수: `lib/theme-utils.js`의 `deriveColors(slots, overrides)`
+
 ### 기술 구현
 
+- `lib/theme-utils.js` — tint/shade, 12→30 파생, v1 마이그레이션 (순수 함수 모듈)
 - 템플릿(`professional.js`, `basic.js`)은 **factory function 패턴**으로 구현: `module.exports = createTemplate`
-- `converter-core.js`의 `resolveTheme(config, projectRoot)` → 테마 JSON 로드 + style 오버라이드 머지
+- `converter-core.js`의 `resolveTheme()` → v2 감지 → `deriveColors()` → style 오버라이드 머지
+- `converter-core.js`의 `THEME_ALIASES` → 기존 테마명 → 신규 테마명 자동 매핑
 - `loadTemplate(templateName, themeConfig)` → factory 호출
-- 검증 도구(`validate-docx.py`, `review-docx.py`, `extract-docx.py`)는 모든 테마의 색상을 인식
+- 검증 도구 → `tools/theme_colors.py`에서 동적으로 테마 색상 세트 로드
 
 ---
 
 ## 스타일 가이드
 
 ### 공통 디자인 토큰
-| 요소 | 값 |
+| 요소 | 값 (office-standard 테마 기준) |
 |------|-----|
 | 기본 폰트 | Malgun Gothic (맑은 고딕) |
 | 코드 폰트 | Consolas |
-| 주 색상 (Primary) | #1B3664 (네이비 블루) |
-| 보조 색상 (Secondary) | #2B5598 |
-| 강조 색상 (Accent) | #F5A623 (골드) |
-| 본문 색상 | #333333 |
-| 테이블 헤더 배경 | Primary (#1B3664), 글자 White |
-| 테이블 교대 행 | #F2F2F2 |
-| 정보 박스 | #E8F0F7 배경, 좌측 네이비 바 |
-| 경고 박스 | #FEF6E6 배경 |
+| 주 색상 (Primary/dk2) | #44546A (슬레이트 블루) |
+| 보조 색상 (Secondary/accent1) | #4472C4 |
+| 강조 색상 (Accent/accent2) | #ED7D31 (오렌지) |
+| 본문 색상 (dk1) | #000000 |
+| 테이블 헤더 배경 | dk2, 글자 lt1 |
+| 테이블 교대 행 (lt2) | #E7E6E6 |
+| 다크 코드 배경 | #1E1E1E (모든 테마 고정) |
 
 ### Word 문서 규칙
 - 가로(Landscape) 레이아웃을 기본으로 사용 (테이블이 많은 기술 문서 특성)
@@ -583,10 +623,13 @@ doc-config의 `theme` 설정(navy-professional 등)이 다이어그램 색상에
 
 - **Mermaid**: `buildMermaidConfig()` → themeVariables JSON config 파일 생성 → `mmdc -c` 플래그
 - **Graphviz**: `injectGraphvizTheme()` → DOT 소스에 node/edge 속성 주입
-- **다색 배색**: flowchart/stateDiagram 노드에 3색 교대 (primary/secondary/tertiary)
-  - flowchart: `classDef` + `class` 구문 자동 주입
+- **다색 배색** (3가지 다이어그램 유형):
+  - **sequenceDiagram**: SVG 후처리로 참여자별 개별 색상 (mmdc→SVG→rect recolor→svgToPng→PNG). 테마 accent 슬롯에서 중간~진한 톤 색상 생성, 흰색 텍스트. 사용자 `box` 구문이 있으면 후처리 스킵.
+  - **stateDiagram**: 의미론적 색상 (SUCCESS→녹색, FAILURE→코랄, WARNING→피치, 나머지→테마 primary)
+  - **flowchart**: `classDef` + `class` 구문 자동 주입 (3색 교대)
   - stateDiagram (ASCII): `class` 구문, (한국어): `:::className` 인라인 구문
-- 사용자가 직접 `classDef`/`fillcolor`를 지정한 경우 → 건드리지 않음
+- **Graphviz 색상 치환**: 사용자 `fillcolor` 있어도 색상 가족 감지 → 테마 대응색 치환 + 폰트/엣지 항상 주입
+- 사용자가 직접 `classDef`/진한 `fillcolor`를 지정한 경우 → 건드리지 않음
 
 ### 하위 호환
 

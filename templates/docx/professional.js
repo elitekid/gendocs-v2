@@ -80,7 +80,13 @@ function createTemplate(theme = {}) {
   const _headerShading = { fill: _COLORS.primary, type: ShadingType.CLEAR };
   const _altShading = { fill: _COLORS.altRow, type: ShadingType.CLEAR };
   const _codeShading = { fill: _COLORS.codeBlock, type: ShadingType.CLEAR };
-  const _cellMargins = { top: 80, bottom: 80, left: 120, right: 120 };
+  const _cellMargins = _isPortrait
+    ? { top: 60, bottom: 60, left: 80, right: 80 }
+    : { top: 80, bottom: 80, left: 120, right: 120 };
+
+  // 세로 모드: 테이블 글꼴 축소 (9pt→8pt) + 헤더도 동일
+  const _tableBodySize = _isPortrait ? Math.max(_SIZES.small - 2, 14) : _SIZES.small;
+  const _tableHeaderSize = _isPortrait ? Math.max(_SIZES.small - 2, 14) : _SIZES.small;
 
   const _docStyles = {
     default: { document: { run: { font: _FONTS.default, size: _SIZES.body } } },
@@ -124,28 +130,28 @@ function createTemplate(theme = {}) {
   function _headerCell(text, width) {
     return new TableCell({
       borders: _borders, width: { size: width, type: WidthType.DXA }, shading: _headerShading, margins: _cellMargins,
-      children: [new Paragraph({ children: [new TextRun({ text, bold: true, color: _COLORS.white, font: _FONTS.default, size: _SIZES.small })] })]
+      children: [new Paragraph({ children: [new TextRun({ text, bold: true, color: _COLORS.white, font: _FONTS.default, size: _tableHeaderSize })] })]
     });
   }
 
   function _bodyCell(text, width, useAlt = false) {
     return new TableCell({
       borders: _borders, width: { size: width, type: WidthType.DXA }, shading: useAlt ? _altShading : null, margins: _cellMargins,
-      children: [new Paragraph({ children: [new TextRun({ text, font: _FONTS.default, size: _SIZES.small })] })]
+      children: [new Paragraph({ children: [new TextRun({ text, font: _FONTS.default, size: _tableBodySize })] })]
     });
   }
 
   function _headerCellCenter(text, width) {
     return new TableCell({
       borders: _borders, width: { size: width, type: WidthType.DXA }, shading: _headerShading, margins: _cellMargins,
-      children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text, bold: true, color: _COLORS.white, font: _FONTS.default, size: _SIZES.body })] })]
+      children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text, bold: true, color: _COLORS.white, font: _FONTS.default, size: _tableHeaderSize })] })]
     });
   }
 
   function _bodyCellCenter(text, width, useAlt = false) {
     return new TableCell({
       borders: _borders, width: { size: width, type: WidthType.DXA }, shading: useAlt ? _altShading : null, margins: _cellMargins,
-      children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text, font: _FONTS.default, size: _SIZES.body })] })]
+      children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text, font: _FONTS.default, size: _tableBodySize })] })]
     });
   }
 
@@ -670,8 +676,10 @@ function createTemplate(theme = {}) {
               tabStops: [{ type: TabStopType.RIGHT, position: rightTabPosition }],
               children: [
                 new TextRun({ text: docInfo.title, font: _FONTS.default, size: 18, color: _COLORS.headerFooter }),
-                new TextRun({ text: "\t" }),
-                new TextRun({ text: docInfo.version, font: _FONTS.default, size: 18, color: _COLORS.headerFooter })
+                ...(docInfo.version ? [
+                  new TextRun({ text: "\t" }),
+                  new TextRun({ text: docInfo.version, font: _FONTS.default, size: 18, color: _COLORS.headerFooter })
+                ] : [])
               ]
             })
           ]

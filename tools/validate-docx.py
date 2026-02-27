@@ -13,6 +13,11 @@ import json
 import zipfile
 import xml.etree.ElementTree as ET
 
+# 동적 테마 색상 로드
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from theme_colors import load_theme_color_sets
+_THEME_COLORS = load_theme_color_sets()
+
 # Windows 터미널 한글 출력 보장
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -179,25 +184,25 @@ def classify_table(tbl):
     bg = get_table_shading(tbl)
     rows = count_table_rows(tbl)
     cols = count_table_cols(tbl)
-    # 다크 코드블록 (all themes)
-    if bg and bg.upper() in ('1E1E1E', '2D2D2D', '1A1A1A', '1A202C', '1B2B2B', '1E1A1C'):
+    bg_upper = bg.upper() if bg else ''
+    # 다크 코드블록 (동적 테마 색상)
+    if bg_upper and bg_upper in _THEME_COLORS['dark_codes']:
         return 'code_dark'
     # 라이트 코드블록 / JSON
-    if cols == 1 and bg and bg.upper() in ('F5F5F5', 'EAEAEA', 'F0F0F0', 'FAFAFA',
-            'EDF2F7', 'E6F4F4', 'F5EDED', 'E9F1F8', 'F7FAFC', 'F0F9F9', 'FAF5F5', 'F5F8FC'):
+    if cols == 1 and bg_upper and bg_upper in _THEME_COLORS['light_codes']:
         return 'code_light'
     # 정보 박스
-    if cols == 1 and bg and bg.upper() in ('E8F0F7', 'E8F4FD', 'EBF4FF', 'E0F5F5', 'F5EDF0', 'DEEAF6'):
+    if cols == 1 and bg_upper and bg_upper in _THEME_COLORS['info_boxes']:
         return 'info_box'
     # 경고 박스
-    if cols == 1 and bg and bg.upper() in ('FEF6E6', 'FFF8E1', 'FFF3CD', 'FFFBEB', 'FFF5EB'):
+    if cols == 1 and bg_upper and bg_upper in _THEME_COLORS['warning_boxes']:
         return 'warning_box'
     if cols == 2 and rows <= 5:
         headers = get_table_header_text(tbl)
         if any('버전' in h or '수정일' in h for h in headers):
             return 'cover_meta'
-    # 데이터 테이블 헤더 (all themes)
-    if bg and bg.upper() in ('1B3664', '1F4E79', '2D3748', '0D6E6E', '6B2D3E', '2B5598', '4A5568', '14919B', '8B3A4A', '2E75B6'):
+    # 데이터 테이블 헤더 (동적 테마 색상)
+    if bg_upper and bg_upper in _THEME_COLORS['header_bgs']:
         return 'data_table'
     return 'data_table'
 

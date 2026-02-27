@@ -20,6 +20,10 @@ converters/
 diagrams/*.py
 diagrams/*.png
 
+# Custom templates (user-specific, not committed)
+templates/docx/custom/*
+!templates/docx/custom/.gitkeep
+
 # Company assets
 assets/ROAD.png
 

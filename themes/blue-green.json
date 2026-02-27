@@ -1,0 +1,44 @@
+{
+  "name": "blue-green",
+  "displayName": "Blue Green",
+  "version": 2,
+  "slots": {
+    "dk1": "000000",
+    "lt1": "FFFFFF",
+    "dk2": "373545",
+    "lt2": "E7E7E7",
+    "accent1": "3494BA",
+    "accent2": "58B6C0",
+    "accent3": "75BDA7",
+    "accent4": "7A8C8E",
+    "accent5": "84ACB6",
+    "accent6": "2683C6",
+    "hlink": "0563C1",
+    "folHlink": "954F72"
+  },
+  "fonts": {
+    "default": "Malgun Gothic",
+    "code": "Consolas"
+  },
+  "sizes": {
+    "title": 48,
+    "subtitle": 26,
+    "h1": 28,
+    "h2": 24,
+    "h3": 22,
+    "h4": 20,
+    "body": 20,
+    "small": 18,
+    "code": 16
+  },
+  "syntax": {
+    "keyword": "569CD6",
+    "annotation": "DCDCAA",
+    "type": "4EC9B0",
+    "string": "CE9178",
+    "number": "B5CEA8",
+    "comment": "6A9955",
+    "default": "D4D4D4"
+  },
+  "overrides": {}
+}

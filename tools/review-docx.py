@@ -15,6 +15,11 @@ import json
 import zipfile
 import xml.etree.ElementTree as ET
 
+# 동적 테마 색상 로드
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from theme_colors import load_theme_color_sets
+_THEME_COLORS = load_theme_color_sets()
+
 # Windows 터미널 한글 출력 보장
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -117,18 +122,17 @@ def classify_table(tbl):
     first_row = tbl.find(f'{{{W}}}tr')
     cols = len(first_row.findall(f'{{{W}}}tc')) if first_row is not None else 0
 
-    # 다크 코드블록 (all themes)
-    if bg in ('1E1E1E', '2D2D2D', '1A1A1A', '1A202C', '1B2B2B', '1E1A1C'):
+    # 다크 코드블록 (동적 테마 색상)
+    if bg in _THEME_COLORS['dark_codes']:
         return 'code_dark'
     # 라이트 코드블록 / JSON
-    if cols == 1 and bg in ('F5F5F5', 'EAEAEA', 'F0F0F0', 'FAFAFA',
-            'EDF2F7', 'E6F4F4', 'F5EDED', 'E9F1F8', 'F7FAFC', 'F0F9F9', 'FAF5F5', 'F5F8FC'):
+    if cols == 1 and bg in _THEME_COLORS['light_codes']:
         return 'code_light'
     # 정보 박스
-    if cols == 1 and bg in ('E8F0F7', 'E8F4FD', 'EBF4FF', 'E0F5F5', 'F5EDF0', 'DEEAF6'):
+    if cols == 1 and bg in _THEME_COLORS['info_boxes']:
         return 'info_box'
     # 경고 박스
-    if cols == 1 and bg in ('FEF6E6', 'FFF8E1', 'FFF3CD', 'FFFBEB', 'FFF5EB'):
+    if cols == 1 and bg in _THEME_COLORS['warning_boxes']:
         return 'warning_box'
     return 'data_table'
 

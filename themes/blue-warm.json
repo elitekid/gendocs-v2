@@ -1,0 +1,44 @@
+{
+  "name": "blue-warm",
+  "displayName": "Blue Warm",
+  "version": 2,
+  "slots": {
+    "dk1": "000000",
+    "lt1": "FFFFFF",
+    "dk2": "242852",
+    "lt2": "E8E8E8",
+    "accent1": "4A66AC",
+    "accent2": "629DD1",
+    "accent3": "297FD5",
+    "accent4": "7F8FA9",
+    "accent5": "5AA2AE",
+    "accent6": "9D90A0",
+    "hlink": "0563C1",
+    "folHlink": "954F72"
+  },
+  "fonts": {
+    "default": "Malgun Gothic",
+    "code": "Consolas"
+  },
+  "sizes": {
+    "title": 48,
+    "subtitle": 26,
+    "h1": 28,
+    "h2": 24,
+    "h3": 22,
+    "h4": 20,
+    "body": 20,
+    "small": 18,
+    "code": 16
+  },
+  "syntax": {
+    "keyword": "569CD6",
+    "annotation": "DCDCAA",
+    "type": "4EC9B0",
+    "string": "CE9178",
+    "number": "B5CEA8",
+    "comment": "6A9955",
+    "default": "D4D4D4"
+  },
+  "overrides": {}
+}
