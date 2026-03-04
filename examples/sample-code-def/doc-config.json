@@ -1,0 +1,36 @@
+{
+  "source": "examples/sample-code-def/source.md",
+  "output": "output/공통코드정의서_{version}.xlsx",
+  "format": "xlsx",
+  "template": "data-spec",
+  "theme": "office-modern",
+  "h1CleanPattern": "^# 공통 코드",
+  "headerCleanUntil": "## 변경 이력",
+
+  "_meta": { "createdBy": "human", "createdAt": "2026-02-27" },
+
+  "docInfo": {
+    "title": "공통 코드 정의서",
+    "subtitle": "Common Code Specification",
+    "version": "v1.0",
+    "author": "시스템관리팀",
+    "company": "gendocs",
+    "createdDate": "2026-02-27",
+    "modifiedDate": "2026-02-27"
+  },
+
+  "xlsx": {
+    "sheetMapping": "h2",
+    "coverSheet": true,
+    "freezeHeaders": true,
+    "autoFilter": true
+  },
+
+  "tableWidths": {
+    "버전|날짜|작성자|변경 내용": [8, 14, 12, 45],
+    "코드|코드명|설명": [12, 20, 45],
+    "코드|코드명|설명|대응 방법": [12, 18, 30, 30],
+    "코드|국가명(한)|국가명(영)|통화 코드|전화 코드": [8, 14, 20, 12, 12],
+    "코드|코드명|설명|할인율": [10, 18, 35, 10]
+  }
+}

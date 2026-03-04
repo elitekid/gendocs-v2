@@ -1,0 +1,35 @@
+{
+  "source": "examples/sample-db-spec/source.md",
+  "output": "output/DB테이블정의서_{version}.xlsx",
+  "format": "xlsx",
+  "template": "data-spec",
+  "theme": "office-modern",
+  "h1CleanPattern": "^# 데이터베이스",
+  "headerCleanUntil": "## 변경 이력",
+
+  "_meta": { "createdBy": "human", "createdAt": "2026-02-27" },
+
+  "docInfo": {
+    "title": "데이터베이스 테이블 정의서",
+    "subtitle": "Database Table Specification",
+    "version": "v1.0",
+    "author": "DB관리팀",
+    "company": "gendocs",
+    "createdDate": "2026-02-27",
+    "modifiedDate": "2026-02-27"
+  },
+
+  "xlsx": {
+    "sheetMapping": "h2",
+    "coverSheet": true,
+    "freezeHeaders": true,
+    "autoFilter": true,
+    "skipProse": true
+  },
+
+  "tableWidths": {
+    "버전|날짜|작성자|변경 내용": [8, 14, 12, 45],
+    "컬럼명|타입|길이|NOT NULL|기본값|설명": [18, 10, 8, 10, 18, 36],
+    "인덱스명|테이블|컬럼|유형|설명": [20, 16, 18, 10, 36]
+  }
+}

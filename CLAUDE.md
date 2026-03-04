@@ -20,7 +20,7 @@ gendocs는 **마크다운(MD)을 원본으로, 모든 형태의 비즈니스 문
 | 포맷 | 확장자 | 기술 스택 | 용도 | 상태 |
 |------|--------|-----------|------|------|
 | **Word** | .docx | Node.js + `docx` | API 명세서, 요건 정의서, 기술 문서 | 검증 완료 |
-| **Excel** | .xlsx | Node.js + `exceljs` | 데이터 명세, 코드 정의서, 대사 파일 규격 | 예정 |
+| **Excel** | .xlsx | Node.js + `exceljs` | 데이터 명세, 코드 정의서, 대사 파일 규격 | 검증 완료 |
 | **PowerPoint** | .pptx | Node.js + `pptxgenjs` | 제안서, 발표 자료, 아키텍처 소개 | 예정 |
 | **PDF** | .pdf | Node.js + `pdf-lib` 또는 Puppeteer | 최종 배포용 문서 | 예정 |
 
@@ -159,7 +159,7 @@ gendocs는 **마크다운(MD)을 원본으로, 모든 형태의 비즈니스 문
 ⑤ 첫 문서 생성 시도 → Flow A 진행
 ```
 
-**현재 상태**: 동작함. 의존성은 `docx`(npm) + `matplotlib`(pip) 2개.
+**현재 상태**: 동작함. 의존성은 `docx`(npm) + `exceljs`(npm) + `matplotlib`(pip) 3개.
 
 ### Flow E. 새 포맷 확장 (XLSX, PPTX, PDF)
 
@@ -178,7 +178,7 @@ gendocs는 **마크다운(MD)을 원본으로, 모든 형태의 비즈니스 문
 ⑤ CLAUDE.md + 기술 스택 문서 업데이트
 ```
 
-**현재 상태**: 미구현. 기술 스택 확정됨 (XLSX→openpyxl, PPTX→pptxgenjs, PDF→reportlab). `docs/기술_조사_및_도구_비교.md` 참조.
+**현재 상태**: XLSX 구현 완료. PPTX/PDF 미구현 (PPTX→pptxgenjs, PDF→reportlab).
 
 ---
 
@@ -222,11 +222,11 @@ gendocs는 **마크다운(MD)을 원본으로, 모든 형태의 비즈니스 문
 
 ### Phase 3 — 포맷 확장 (v0.4)
 
-| 포맷 | 패키지 | 언어 | 우선순위 |
-|------|--------|------|----------|
-| XLSX | openpyxl | Python | 높음 (데이터 명세, 코드 정의서 수요) |
-| PPTX | pptxgenjs | Node.js | 중간 (제안서, 발표 자료) |
-| PDF | reportlab | Python | 낮음 (DOCX→PDF 변환으로 대체 가능) |
+| 포맷 | 패키지 | 언어 | 우선순위 | 상태 |
+|------|--------|------|----------|------|
+| XLSX | exceljs | Node.js | 높음 (데이터 명세, 코드 정의서 수요) | **완료** |
+| PPTX | pptxgenjs | Node.js | 중간 (제안서, 발표 자료) | 미완 |
+| PDF | reportlab | Python | 낮음 (DOCX→PDF 변환으로 대체 가능) | 미완 |
 
 포맷별로 필요한 것: 템플릿 모듈 + converter 패턴 + 검증 도구 + 성공 사례
 
@@ -247,7 +247,7 @@ gendocs는 **마크다운(MD)을 원본으로, 모든 형태의 비즈니스 문
 gendocs/
 ├── CLAUDE.md                        ← [핵심] 이 파일. Claude Code 지시서
 ├── PROJECT_PLAN.md                  ← 프로젝트 로드맵
-├── package.json                     ← Node.js 의존성 (docx)
+├── package.json                     ← Node.js 의존성 (docx, exceljs)
 ├── requirements.txt                 ← Python 의존성 (matplotlib)
 │
 ├── .claude/skills/                  ← 슬래시 커맨드 (Skills)
@@ -255,8 +255,9 @@ gendocs/
 │   └── validate/SKILL.md            ← /validate — 문서 검증
 │
 ├── lib/                             ← [v0.2] Generic Converter 엔진
-│   ├── converter-core.js            ← 공통 변환 로직 (파싱, 너비 계산, 변환, 빌드)
-│   ├── convert.js                   ← 진입점: node lib/convert.js <config.json>
+│   ├── converter-core.js            ← 공통 DOCX 변환 로직 (파싱, 너비 계산, 변환, 빌드)
+│   ├── converter-xlsx.js            ← [v0.6] XLSX 변환 엔진 (시트 분할, 테이블 렌더링)
+│   ├── convert.js                   ← 진입점: node lib/convert.js <config.json> (DOCX/XLSX 자동 라우팅)
 │   ├── theme-utils.js               ← [v0.5] 테마 색상 유틸리티 (tint/shade, 12→30 파생)
 │   ├── diagram-renderer.js          ← [v0.4] 다이어그램 자동 렌더링 (Mermaid/Graphviz + 테마 매핑)
 │   ├── scoring.js                   ← [v0.4] 다차원 품질 점수 계산 (순수 함수 모듈)
@@ -284,7 +285,9 @@ gendocs/
 │   │   └── professional.js          ← 고급 (가로, 다크코드, 머릿글/바닥글, 이미지)
 │   ├── diagram/
 │   │   └── sequence.py              ← 시퀀스 다이어그램 기본 템플릿
-│   ├── xlsx/                        ← (예정)
+│   ├── xlsx/
+│   │   ├── data-spec.js             ← [v0.6] 데이터 명세 (표지, 헤더 스타일, 교대행)
+│   │   └── basic.js                 ← [v0.6] 기본 (표지 없이 심플)
 │   ├── pptx/                        ← (예정)
 │   └── pdf/                         ← (예정)
 │
@@ -293,10 +296,13 @@ gendocs/
 ├── diagrams/                        ← 다이어그램 생성 스크립트 (사용자 생성)
 │
 ├── examples/                        ← 성공 사례 (레퍼런스)
-│   ├── sample-api/                  ← BookStore API 명세서 예제
+│   ├── sample-api/                  ← BookStore API 명세서 예제 (DOCX)
 │   │   ├── source.md                ← 원본 MD
 │   │   └── doc-config.json          ← 변환 설정
-│   └── sample-batch/                ← 주문처리 배치 규격서 예제
+│   ├── sample-batch/                ← 주문처리 배치 규격서 예제 (DOCX)
+│   │   ├── source.md
+│   │   └── doc-config.json
+│   └── sample-code-def/             ← 공통 코드 정의서 예제 (XLSX)
 │       ├── source.md
 │       └── doc-config.json
 │
@@ -307,6 +313,7 @@ gendocs/
 └── tools/                           ← 검증·디버그·유틸리티
     ├── theme_colors.py              ← [v0.5] 테마 색상 동적 로드 (검증 도구 공유 모듈)
     ├── validate-docx.py             ← [핵심] DOCX 구조 검증 + 레이아웃 분석 (--json 지원)
+    ├── validate-xlsx.js             ← [v0.6] XLSX 구조 검증 (시트/테이블/헤더 분석, --json 지원)
     ├── extract-docx.py              ← [핵심] DOCX 텍스트 추출 (ZIP+XML, 의존성 없음, --json 지원)
     ├── regression-test.js           ← [v0.3] 회귀 테스트 (baseline 비교)
     ├── create-baselines.js          ← [v0.3] baseline 생성
@@ -345,6 +352,22 @@ gendocs/
 **professional.js** — 가로 레이아웃, 프로페셔널 스타일
 - 추가 API: `h4`, `labelText`, `flowBox`, `createImage`, `createJsonBlock`, `createSyntaxCodeBlock`
 - 특징: 다크테마 코드블록, 로고 표지, 머릿글/바닥글(페이지 번호), 이미지 삽입
+
+### Excel (XLSX) 템플릿 — 검증 완료
+
+**data-spec.js** — 데이터 명세용 (표지 포함)
+- 공개 API: `createWorkbook`, `saveWorkbook`, `addSheet`, `addCoverSheet`, `writeTitle`, `writeText`, `writeBullet`, `writeInfoBox`, `writeWarningBox`, `writeTable`, `writeCodeBlock`, `applyAutoFilter`, `freezeHeaderRow`, `setColumnWidths`
+- 특징: 테마 색상 헤더, 교대행 배경, 자동 필터, 행 고정, A4 가로 인쇄 설정
+
+**basic.js** — 심플 (표지 없음)
+- data-spec과 동일 API, `addCoverSheet`는 no-op
+- 용도: 간단한 데이터 목록, 빠른 내보내기
+
+**XLSX 변환 엔진** (`lib/converter-xlsx.js`):
+- `converter-core.js`의 유틸리티 재사용 (parseTable, resolveTheme 등)
+- H2 기준 시트 분할 (`sheetMapping: "h2"`)
+- `sheetMapping: "single"` → 전체 1시트, `"table"` → 테이블마다 시트
+- `tableWidths` 값은 Excel 문자 폭 단위 (DOCX의 DXA와 다름)
 
 ### Generic Converter 사용법 (v0.2, 권장)
 
@@ -393,9 +416,34 @@ node lib/convert.js doc-configs/내문서.json --validate
 }
 ```
 
+**XLSX doc-config JSON 구조**:
+```json
+{
+  "source": "source/코드정의서.md",
+  "output": "output/코드정의서_{version}.xlsx",
+  "format": "xlsx",
+  "template": "data-spec",
+  "theme": "office-modern",
+  "docInfo": { "title": "...", "version": "v1.0", ... },
+  "xlsx": {
+    "sheetMapping": "h2",
+    "coverSheet": true,
+    "freezeHeaders": true,
+    "autoFilter": true
+  },
+  "tableWidths": {
+    "코드|코드명|설명": [12, 20, 45]
+  }
+}
+```
+- `format: "xlsx"` 또는 output 확장자가 `.xlsx`이면 XLSX 변환
+- `tableWidths` 값은 Excel 문자 폭 단위 (DOCX의 DXA가 아님)
+- `sheetMapping`: `"h2"` (H2마다 시트, 기본), `"single"` (전체 1시트), `"table"` (테이블마다 시트)
+
 **핵심 파일**:
-- `lib/converter-core.js` — 공통 변환 엔진 (파싱, 너비 계산, 요소 변환, 빌드)
-- `lib/convert.js` — CLI 진입점 (`node lib/convert.js <config.json> [--validate]`)
+- `lib/converter-core.js` — 공통 DOCX 변환 엔진 (파싱, 너비 계산, 요소 변환, 빌드)
+- `lib/converter-xlsx.js` — XLSX 변환 엔진 (시트 분할, 테이블 렌더링)
+- `lib/convert.js` — CLI 진입점 (`node lib/convert.js <config.json> [--validate]`, DOCX/XLSX 자동 라우팅)
 
 > **레거시 방식**: 커스텀 로직이 필요한 경우 `converters/` 에 전용 변환 스크립트를 작성할 수 있다. `examples/api-spec/convert.js`, `examples/hipass-batch/convert.js` 참조.
 
@@ -957,3 +1005,9 @@ node tools/pipeline-audit.js --batch --skip-convert             # 전체, 기존
 - **원본**: `source.md`
 - **설정**: `doc-config.json`
 - **특징**: 고정길이 전문 규격, S/D/E 레코드 테이블, SFTP 연동, 코드 예시
+
+### 3. 공통 코드 정의서 (Excel)
+- **위치**: `examples/sample-code-def/`
+- **원본**: `source.md`
+- **설정**: `doc-config.json`
+- **특징**: H2 기준 시트 분할, 상태코드/에러코드/국가코드 테이블, 표지 시트, 교대행, 자동 필터, 행 고정
