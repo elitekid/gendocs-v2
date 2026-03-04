@@ -26,6 +26,7 @@ templates/docx/custom/*
 
 # Company assets
 assets/ROAD.png
+assets/road-logo.png
 
 # Regression test baselines (user-specific)
 tests/golden/*
