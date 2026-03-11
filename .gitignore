@@ -1,5 +1,6 @@
 # Build output
 output/
+.temp-test/
 
 # Dependencies
 node_modules/

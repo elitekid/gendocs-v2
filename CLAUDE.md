@@ -686,6 +686,38 @@ doc-config의 `theme` 설정(navy-professional 등)이 다이어그램 색상에
 - `diagrams.theme` 명시 시 → Mermaid 기본 테마 사용 (gendocs 테마 매핑 비활성)
 - 테마 없이 사용 → Mermaid 기본 테마 (연보라색)
 
+### Graphviz DOT 플로우차트 스타일 가이드
+
+플로우차트/프로세스/검증 체인 다이어그램은 Mermaid 대신 Graphviz DOT 권장.
+
+**자동 주입 기본값** (`injectGraphvizTheme`):
+| 속성 | 기본값 | 효과 | 스킵 조건 |
+|------|--------|------|-----------|
+| `splines` | `ortho` | 직각 연결선 (각이 딱딱 맞는 스타일) | 사용자 `splines=` 지정 시 |
+| `style` | `"rounded,filled"` | 둥근 모서리 박스 (r=3 SVG 후처리) | 사용자 `style=` 지정 시 |
+| `margin` | `"0.12,0.08"` | 콤팩트한 노드 패딩 | 사용자 `margin=` 지정 시 |
+| `penwidth` (node) | `1.2` | 얇고 깔끔한 테두리 | 사용자 `penwidth=` 지정 시 |
+| `penwidth` (edge) | `1.2` | 얇은 연결선 | 사용자 `penwidth=` 지정 시 |
+| `size` | orientation 기반 (`9,5` / `5,7`) | 레이아웃 크기 | 사용자 `size=` 지정 시 |
+| `ratio` | `compress` | 압축 비율 | 사용자 `ratio=` 지정 시 |
+
+- 사용자가 해당 속성을 DOT 소스에 직접 지정하면 자동 주입을 스킵 (하위 호환)
+
+**색상 컨벤션** (테마 자동 치환):
+| 역할 | fillcolor | fontcolor | 비고 |
+|------|-----------|-----------|------|
+| 시작/종료 | colors.primary(dk2) 직접 사용 | white | 진한색 → 치환 안 됨 |
+| 검증/판단 | 연한 파랑 계열 (#E8EEF4 등) | 진한색 | → 테마 info로 치환 |
+| 조회/처리 | 약간 진한 파랑 (#DCE4ED 등) | 진한색 | → 테마 info로 치환 |
+| 실패/에러 | 연한 빨강 (#F5E8E8 등) | 빨강 | → 테마 error로 치환 |
+| 성공 | 연한 초록 (#D6FFD6 등) | 진한색 | → 테마 success로 치환 |
+
+**엣지 컨벤션**:
+- 정상 흐름: `penwidth=2` (수동 지정, 기본 1.2보다 강조)
+- 실패 흐름: `style=dashed, color="<빨강>"` (수동 지정)
+
+**참조 예시**: `source/큐뱅_HMAC_인증_구현_가이드.md` 3.1 검증 체인
+
 ---
 
 ## 검증 체계

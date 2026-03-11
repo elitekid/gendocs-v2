@@ -21,6 +21,7 @@ const { execSync } = require('child_process');
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const DOC_CONFIGS_DIR = path.join(PROJECT_ROOT, 'doc-configs');
 const GOLDEN_DIR = path.join(PROJECT_ROOT, 'tests', 'golden');
+const TEMP_OUTPUT_DIR = '.temp-test';
 
 // 허용 범위 정의
 const TOLERANCES = {
@@ -117,6 +118,12 @@ function main() {
     }
   }
 
+  // 임시 출력 디렉토리 생성 (output/ 오염 방지)
+  const tempDir = path.join(PROJECT_ROOT, TEMP_OUTPUT_DIR);
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
+
   console.log(`\n=== 회귀 테스트 시작 (${configFiles.length}개 문서) ===\n`);
 
   const results = [];
@@ -137,20 +144,20 @@ function main() {
     console.log(`[TEST] ${name}`);
 
     try {
-      // 1. DOCX 변환
-      execSync(`node lib/convert.js "${configPath}"`, {
+      // 1. DOCX 변환 (임시 디렉토리로 출력)
+      execSync(`node lib/convert.js "${configPath}" --output-dir "${TEMP_OUTPUT_DIR}"`, {
         cwd: PROJECT_ROOT,
         encoding: 'utf-8',
         stdio: 'pipe',
       });
 
-      // config에서 output 경로 파악
+      // config에서 output 경로 파악 (임시 디렉토리 기준)
       const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      let outputFile = config.output;
-      if (outputFile.includes('{version}')) {
-        outputFile = outputFile.replace('{version}', config.docInfo?.version || 'v1.0');
+      let outputBase = path.basename(config.output);
+      if (outputBase.includes('{version}')) {
+        outputBase = outputBase.replace('{version}', config.docInfo?.version || 'v1.0');
       }
-      const outputPath = path.join(PROJECT_ROOT, outputFile);
+      const outputPath = path.join(tempDir, outputBase);
 
       if (!fs.existsSync(outputPath)) {
         console.log(`  [ERROR] 출력 파일 없음: ${outputPath}`);
@@ -228,6 +235,11 @@ function main() {
   }
 
   console.log(`\n  PASS ${pass} | FAIL ${fail} | SKIP ${skip} | ERROR ${error} / 총 ${results.length}개`);
+
+  // 임시 출력 디렉토리 정리
+  try {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  } catch (e) { /* ignore */ }
 
   if (fail > 0 || error > 0) {
     console.log('\n[RESULT] FAIL — 회귀 발견됨');
