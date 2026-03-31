@@ -12,6 +12,7 @@
  */
 
 const ExcelJS = require('exceljs');
+const xlsxUtils = require('../../lib/xlsx-utils');
 
 const DEFAULT_COLORS = {
   primary: '0E2841',
@@ -39,6 +40,9 @@ const XLSX_SIZES = {
   header: 10,
   body: 10,
   code: 9,
+  kpiValue: 22,
+  kpiTitle: 10,
+  kpiSubtitle: 9,
 };
 
 // Excel 전용 행 높이 (pt 단위)
@@ -49,6 +53,9 @@ const ROW_HEIGHTS = {
   coverTitle: 30,
   coverSubtitle: 20,
   coverInfo: 18,
+  summary: 20,
+  kpiTop: 32,
+  kpiBottom: 18,
 };
 
 function createTemplate(theme = {}) {
@@ -99,8 +106,11 @@ function createTemplate(theme = {}) {
 
   /**
    * 시트 추가 (이름 31자 제한 + 특수문자 치환)
+   * @param {Object} [opts] - 옵션
+   * @param {string} [opts.orientation] - 'landscape' (기본) | 'portrait'
    */
-  function addSheet(wb, name) {
+  function addSheet(wb, name, opts) {
+    const sheetOpts = opts || {};
     let safeName = name
       .replace(/[\\/*?\[\]:]/g, ' ')
       .trim()
@@ -115,10 +125,11 @@ function createTemplate(theme = {}) {
       idx++;
     }
     const sheet = wb.addWorksheet(finalName);
-    // 인쇄 설정: A4 가로, 커스텀 여백 0.5in, 가로 중앙 정렬
+    const orientation = sheetOpts.orientation || 'landscape';
+    // 인쇄 설정: A4, 커스텀 여백 0.5in, 가로 중앙 정렬
     sheet.pageSetup = {
       paperSize: 9, // A4
-      orientation: 'landscape',
+      orientation,
       fitToPage: true,
       fitToWidth: 1,
       fitToHeight: 0,
@@ -277,9 +288,18 @@ function createTemplate(theme = {}) {
    * @param {string[]} headers
    * @param {number[]} widths - Excel 문자 폭 단위
    * @param {string[][]} rows - 데이터 행
+   * @param {Object} [opts] - 확장 옵션
+   * @param {Object} [opts.columnDefs] - 컬럼별 타입/수식 정의 { "헤더명": { type, summary, formula } }
+   * @param {boolean} [opts.semanticColors] - 의미론적 색상 적용
+   * @param {boolean} [opts.richText] - rich text 파싱 적용
+   * @param {Object} [opts.customSemanticMap] - 커스텀 의미론적 색상 매핑
    * @returns {number} 다음 행 번호
    */
-  function writeTable(sheet, startRow, headers, widths, rows) {
+  function writeTable(sheet, startRow, headers, widths, rows, opts) {
+    const options = opts || {};
+    const columnDefs = options.columnDefs || {};
+    const enableSemantic = options.semanticColors || false;
+    const enableRichText = options.richText !== false; // 기본 true
     let r = startRow;
 
     // 열 너비 설정
@@ -303,7 +323,10 @@ function createTemplate(theme = {}) {
       cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
       cell.border = { top: thinBorder, bottom: headerBottomBorder, left: thinBorder, right: thinBorder };
     }
+    const headerRowNum = r;
     r++;
+
+    const dataStartRow = r;
 
     // 데이터 행
     for (let ri = 0; ri < rows.length; ri++) {
@@ -312,18 +335,223 @@ function createTemplate(theme = {}) {
       const isAlt = ri % 2 === 1;
       for (let c = 0; c < headers.length; c++) {
         const cell = dataRow.getCell(c + 1);
-        cell.value = (rows[ri] && rows[ri][c]) || '';
+        const rawValue = (rows[ri] && rows[ri][c]) || '';
+        const headerName = headers[c].trim();
+        const colDef = columnDefs[headerName] || {};
+        const colType = colDef.type || 'text';
+
+        // 타입 변환
+        if (colType !== 'text' && colType !== 'status' && colType !== 'code') {
+          if (colDef.formula) {
+            // 수식 (summaryRow에서 해당 행 수식이 아님 — 데이터 행에 formula가 있는 경우)
+            const formulaStr = xlsxUtils.resolveFormula(
+              colDef.formula, headers, headerName, r, null
+            );
+            cell.value = { formula: formulaStr };
+          } else {
+            const converted = xlsxUtils.convertCellValue(rawValue, colType);
+            cell.value = converted.value;
+            if (converted.numFmt) cell.numFmt = converted.numFmt;
+          }
+        } else if (enableRichText && rawValue) {
+          // rich text 파싱
+          const richValue = xlsxUtils.parseInlineMarkdown(rawValue, {
+            defaultFont: F.default,
+            codeFont: F.code,
+            fontSize: S.body,
+            colors: { text: C.text },
+          });
+          cell.value = richValue;
+        } else {
+          cell.value = rawValue;
+        }
+
         cell.font = bodyFont(S.body);
         if (isAlt) {
           cell.fill = altRowFill();
         }
         cell.alignment = { vertical: 'middle', wrapText: true };
         cell.border = allBorders;
+
+        // 숫자/퍼센트 정렬
+        if (colType === 'number' || colType === 'percentage' || colType === 'date') {
+          cell.alignment = { vertical: 'middle', horizontal: 'right', wrapText: true };
+        }
+        if (colType === 'code') {
+          cell.font = { name: F.code, size: S.body, color: { argb: 'FF' + C.text } };
+        }
+
+        // 의미론적 색상 (status 컬럼 또는 전역)
+        if (colType === 'status' || (enableSemantic && typeof cell.value === 'string')) {
+          xlsxUtils.applySemanticColor(cell, String(rawValue), options.customSemanticMap);
+        }
       }
       r++;
     }
 
+    const dataEndRow = r - 1;
+
+    // 테이블 메타 정보 저장 (summaryRow에서 참조)
+    sheet._lastTable = { headerRowNum, dataStartRow, dataEndRow, headers, columnDefs };
+
     return r;
+  }
+
+  /**
+   * 합계/요약 행 작성
+   * 직전 writeTable()의 데이터를 참조하여 SUM/AVERAGE/COUNT/MIN/MAX 수식 삽입.
+   *
+   * @param {ExcelJS.Worksheet} sheet
+   * @param {number} row - 합계 행 번호
+   * @param {Object} [overrides] - { label, columnDefs } 오버라이드
+   * @returns {number} 다음 행 번호
+   */
+  function writeSummaryRow(sheet, row, overrides) {
+    const tableInfo = sheet._lastTable;
+    if (!tableInfo) return row;
+
+    const ov = overrides || {};
+    const label = ov.label || '합계';
+    const headers = tableInfo.headers;
+    const colDefs = ov.columnDefs || tableInfo.columnDefs || {};
+    const dataStartRow = tableInfo.dataStartRow;
+    const dataEndRow = tableInfo.dataEndRow;
+
+    const summaryR = sheet.getRow(row);
+    summaryR.height = ROW_HEIGHTS.summary;
+
+    let labelWritten = false;
+
+    for (let c = 0; c < headers.length; c++) {
+      const cell = summaryR.getCell(c + 1);
+      const headerName = headers[c].trim();
+      const colDef = colDefs[headerName] || {};
+      const summaryFn = colDef.summary;
+
+      if (summaryFn) {
+        const cl = xlsxUtils.colLetter(c);
+        const range = `${cl}${dataStartRow}:${cl}${dataEndRow}`;
+        let formula;
+        switch (summaryFn) {
+          case 'sum': formula = `SUM(${range})`; break;
+          case 'average': formula = `AVERAGE(${range})`; break;
+          case 'count': formula = `COUNTA(${range})`; break;
+          case 'min': formula = `MIN(${range})`; break;
+          case 'max': formula = `MAX(${range})`; break;
+          default: formula = null;
+        }
+        if (formula) {
+          cell.value = { formula };
+          // 숫자 서식 상속
+          if (colDef.type === 'percentage') cell.numFmt = '0.0%';
+          else if (colDef.type === 'number') cell.numFmt = '#,##0';
+        }
+        cell.alignment = { vertical: 'middle', horizontal: 'right' };
+      } else if (!labelWritten) {
+        cell.value = label;
+        labelWritten = true;
+        cell.alignment = { vertical: 'middle', horizontal: 'left' };
+      } else {
+        cell.value = '';
+        cell.alignment = { vertical: 'middle' };
+      }
+
+      cell.font = bodyFont(S.body, { bold: true });
+      cell.border = {
+        top: { style: 'medium', color: { argb: 'FF' + C.primary } },
+        bottom: thinBorder,
+        left: thinBorder,
+        right: thinBorder,
+      };
+    }
+
+    return row + 1;
+  }
+
+  /**
+   * KPI 카드 작성 (셀 병합 레이아웃)
+   *
+   * @param {ExcelJS.Worksheet} sheet
+   * @param {number} startRow
+   * @param {number} startCol - 1-based
+   * @param {Object} card - { title, value, subtitle, trend, color }
+   *   color: 'primary' | 'accent' | 'success' | 'error' | hex
+   * @returns {{ nextRow: number, nextCol: number }}
+   */
+  function writeKpiCard(sheet, startRow, startCol, card) {
+    const colSpan = 2; // 2열 병합
+    const endCol = startCol + colSpan - 1;
+
+    // 색상 결정
+    let bgColor, fgColor;
+    switch (card.color) {
+      case 'primary': bgColor = C.primary; fgColor = C.white; break;
+      case 'accent': bgColor = C.accent; fgColor = C.white; break;
+      case 'success': bgColor = '375623'; fgColor = 'FFFFFF'; break;
+      case 'error': bgColor = 'C62828'; fgColor = 'FFFFFF'; break;
+      default:
+        bgColor = card.color || C.primary;
+        fgColor = C.white;
+    }
+
+    // 상단: 큰 숫자
+    sheet.mergeCells(startRow, startCol, startRow, endCol);
+    const valueRow = sheet.getRow(startRow);
+    valueRow.height = ROW_HEIGHTS.kpiTop;
+    const valueCell = valueRow.getCell(startCol);
+    valueCell.value = card.value != null ? card.value : '';
+    valueCell.font = { name: F.default, size: S.kpiValue, bold: true, color: { argb: 'FF' + fgColor } };
+    valueCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + bgColor } };
+    valueCell.alignment = { vertical: 'bottom', horizontal: 'center' };
+    valueCell.border = { top: thinBorder, left: thinBorder, right: thinBorder };
+
+    // 하단: 제목 + 부제
+    const subtitleRow = startRow + 1;
+    sheet.mergeCells(subtitleRow, startCol, subtitleRow, endCol);
+    const subRow = sheet.getRow(subtitleRow);
+    subRow.height = ROW_HEIGHTS.kpiBottom;
+    const subCell = subRow.getCell(startCol);
+
+    let titleText = card.title || '';
+    if (card.subtitle) titleText += `  (${card.subtitle})`;
+    if (card.trend) {
+      const arrow = card.trend === 'up' ? '↑' : card.trend === 'down' ? '↓' : '';
+      titleText += ` ${arrow}`;
+    }
+    subCell.value = titleText;
+    subCell.font = { name: F.default, size: S.kpiTitle, color: { argb: 'FF' + fgColor } };
+    subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + bgColor } };
+    subCell.alignment = { vertical: 'top', horizontal: 'center' };
+    subCell.border = { bottom: thinBorder, left: thinBorder, right: thinBorder };
+
+    return { nextRow: subtitleRow + 1, nextCol: endCol + 1 };
+  }
+
+  /**
+   * 병합 헤더 행 (다단 헤더 상위 그룹)
+   *
+   * @param {ExcelJS.Worksheet} sheet
+   * @param {number} row
+   * @param {Array<{text: string, fromCol: number, toCol: number}>} mergeRanges - 1-based
+   * @returns {number} 다음 행 번호
+   */
+  function writeMergedHeader(sheet, row, mergeRanges) {
+    const r = sheet.getRow(row);
+    r.height = ROW_HEIGHTS.header;
+
+    for (const range of mergeRanges) {
+      if (range.fromCol !== range.toCol) {
+        sheet.mergeCells(row, range.fromCol, row, range.toCol);
+      }
+      const cell = r.getCell(range.fromCol);
+      cell.value = range.text;
+      cell.font = headerFont();
+      cell.fill = headerFill();
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      cell.border = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
+    }
+
+    return row + 1;
   }
 
   /**
@@ -380,6 +608,9 @@ function createTemplate(theme = {}) {
     writeInfoBox,
     writeWarningBox,
     writeTable,
+    writeSummaryRow,
+    writeKpiCard,
+    writeMergedHeader,
     writeCodeBlock,
     applyAutoFilter,
     freezeHeaderRow,

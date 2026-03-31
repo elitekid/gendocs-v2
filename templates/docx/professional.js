@@ -185,21 +185,22 @@ function createTemplate(theme = {}) {
     });
   }
 
-  function parseInlineFormatting(textContent, fontSize = _SIZES.body) {
+  function parseInlineFormatting(textContent, fontSize = _SIZES.body, textColor = _COLORS.text) {
     const parts = textContent.split(/(\*\*[^*]+\*\*|`[^`]+`)/);
     return parts.filter(p => p).map(part => {
       if (part.startsWith('**') && part.endsWith('**')) {
-        return new TextRun({ text: part.slice(2, -2), font: _FONTS.default, size: fontSize, bold: true, color: _COLORS.text });
+        return new TextRun({ text: part.slice(2, -2), font: _FONTS.default, size: fontSize, bold: true, color: textColor });
       }
       if (part.startsWith('`') && part.endsWith('`')) {
         return new TextRun({ text: part.slice(1, -1), font: _FONTS.code, size: fontSize - 2, color: _COLORS.inlineCode });
       }
-      return new TextRun({ text: part, font: _FONTS.default, size: fontSize, color: _COLORS.text });
+      return new TextRun({ text: part, font: _FONTS.default, size: fontSize, color: textColor });
     });
   }
 
   function bullet(content, options = {}) {
-    const children = parseInlineFormatting(content, _SIZES.body);
+    const bulletColor = _COLORS.bulletText || _COLORS.text;
+    const children = parseInlineFormatting(content, _SIZES.body, bulletColor);
     return new Paragraph({
       numbering: { reference: "bullets", level: 0 }, spacing: options.spacing || {},
       children

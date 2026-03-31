@@ -24,11 +24,12 @@ AskUserQuestion으로 물어보세요:
 | 선택지 | 설명 |
 |--------|------|
 | Word (.docx) | API 명세서, 요건 정의서, 기술 문서 (검증 완료) |
-| Excel (.xlsx) | 데이터 명세, 코드 정의서 (예정) |
+| Excel (.xlsx) | 데이터 명세, 코드 정의서, 모니터링 대시보드 (검증 완료) |
 | PowerPoint (.pptx) | 제안서, 발표 자료 (예정) |
 | PDF (.pdf) | 최종 배포용 (예정) |
 
-> 현재 Word(.docx)만 검증 완료 상태입니다. 다른 포맷 선택 시 "아직 지원되지 않는 포맷입니다. DOCX를 먼저 생성하시겠습니까?" 로 안내하세요.
+> 현재 Word(.docx)과 Excel(.xlsx)이 검증 완료 상태입니다. 다른 포맷 선택 시 "아직 지원되지 않는 포맷입니다. DOCX를 먼저 생성하시겠습니까?" 로 안내하세요.
+> Excel 선택 시 아래 **XLSX AI 분석 가이드** 섹션을 참조하세요.
 
 ---
 
@@ -658,3 +659,129 @@ node tools/pipeline-audit.js --batch --skip-convert                 # 전체 진
 | config | 변환 설정 문제 | doc-configs/ JSON |
 | converter | 변환 엔진 버그 | lib/converter-core.js |
 | info | 참고용 (수정 불필요) | 시뮬레이션 추정치 |
+
+---
+
+## XLSX AI 분석 가이드
+
+Excel 문서 생성 시, AI가 MD를 분석하여 최적의 doc-config를 설계합니다.
+
+### XLSX 분석 체크리스트
+
+MD를 받으면 다음 6가지를 판단하세요:
+
+1. **데이터 유형 분석** — 이 MD에 어떤 종류의 데이터가 있는가?
+   - 코드 정의 (코드|코드명|설명) → 단순 테이블
+   - KPI/지표 (수치 요약 + 상세 데이터) → 대시보드 + 테이블
+   - 로그/이력 (날짜별 기록) → 시계열 테이블
+   - 비교/분석 (항목별 점수/비율) → 요약 + 상세
+
+2. **시트 분배** — 어떤 테이블을 어떤 시트에 넣을지
+   - H2 섹션별 분할이 자연스러운가? → `sheetMapping: "h2"` (기본)
+   - 특정 조합이 필요한가? → `xlsx.sheets[]` 커스텀
+   - 대시보드 + 상세 시트가 필요한가? → `xlsx.sheets[]` + `layout: "dashboard"`
+
+3. **컬럼 타입** — 각 컬럼이 어떤 데이터인지
+   - 숫자 (호출 수, 건수) → `type: "number"` → 우정렬 + #,##0 서식
+   - 퍼센트 (성공률, 비율) → `type: "percentage"` → 0.0% 서식
+   - 날짜 (작성일, 발생일) → `type: "date"` → YYYY-MM-DD
+   - 상태 (성공/실패/대기) → `type: "status"` → 의미론적 색상
+   - 코드 (API 경로, 코드값) → `type: "code"` → Consolas 폰트
+
+4. **레이아웃 선택**
+   - `data-table` — 단순 데이터 테이블 (기본)
+   - `dashboard` — KPI 카드 + 요약 테이블
+   - `summary-detail` — 상위 요약 + 하단 상세
+
+5. **수식 필요 여부** — 합계, 평균, 비율 계산
+   - 숫자 컬럼 → `summary: "sum"` / `"average"` / `"count"` / `"min"` / `"max"`
+   - 비율 계산 → `formula: "{발생 건수}/{합계}"` (컬럼명 참조)
+   - `summaryRow: true` → 테이블 하단에 합계 행 자동 생성
+
+6. **시각적 강조** — 의미론적 색상
+   - `xlsx.semanticColors: true` → 전역 활성화
+   - `type: "status"` 컬럼은 자동으로 색상 적용
+   - 기본 매핑: 성공→초록, 실패→빨강, 경고→주황, 진행 중→파랑
+
+### doc-config 패턴별 예시
+
+**패턴 1: 단순 코드 정의서** (기존 sheetMapping)
+```json
+{
+  "format": "xlsx",
+  "template": "data-spec",
+  "xlsx": {
+    "sheetMapping": "h2",
+    "coverSheet": true,
+    "freezeHeaders": true,
+    "autoFilter": true
+  },
+  "tableWidths": {
+    "코드|코드명|설명": [12, 20, 45]
+  }
+}
+```
+
+**패턴 2: 대시보드 + 상세 데이터** (커스텀 sheets[])
+```json
+{
+  "format": "xlsx",
+  "template": "data-spec",
+  "xlsx": {
+    "sheetMapping": "custom",
+    "semanticColors": true,
+    "sheets": [
+      {
+        "name": "📊 대시보드",
+        "source": "## 현황 요약",
+        "sections": [
+          {
+            "type": "kpi-cards",
+            "cards": [
+              { "title": "총 건수", "valueFrom": "총 건수|값", "color": "primary" },
+              { "title": "성공률", "valueFrom": "성공률|값", "color": "accent" }
+            ]
+          },
+          {
+            "type": "table",
+            "source": "### 항목별 현황",
+            "columnDefs": {
+              "건수": { "type": "number", "summary": "sum" },
+              "비율": { "type": "percentage", "summary": "average" },
+              "상태": { "type": "status" }
+            },
+            "summaryRow": true
+          }
+        ]
+      },
+      {
+        "name": "📋 상세 데이터",
+        "source": "## 상세 로그",
+        "columnDefs": {
+          "날짜": { "type": "date" },
+          "건수": { "type": "number" }
+        }
+      }
+    ]
+  }
+}
+```
+
+**패턴 3: 세로 인쇄 + 의미론적 색상**
+```json
+{
+  "format": "xlsx",
+  "xlsx": {
+    "sheetMapping": "h2",
+    "orientation": "portrait",
+    "semanticColors": true
+  }
+}
+```
+
+### 하위 호환
+
+- `xlsx.sheets[]` 없으면 → 기존 `sheetMapping` 그대로 동작
+- `columnDefs` 없으면 → 전부 text로 처리 (기존 동작)
+- `semanticColors` 없으면 → false (기존 동작)
+- 기존 doc-config 수정 불필요

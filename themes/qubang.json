@@ -1,0 +1,47 @@
+{
+  "name": "qubang",
+  "displayName": "큐뱅",
+  "version": 2,
+  "slots": {
+    "dk1": "333333",
+    "lt1": "FFFFFF",
+    "dk2": "1B3664",
+    "lt2": "F2F2F2",
+    "accent1": "2B5598",
+    "accent2": "F5A623",
+    "accent3": "196B24",
+    "accent4": "0F9ED5",
+    "accent5": "A02B93",
+    "accent6": "4EA72E",
+    "hlink": "467886",
+    "folHlink": "96607D"
+  },
+  "fonts": {
+    "default": "Malgun Gothic",
+    "code": "Consolas"
+  },
+  "sizes": {
+    "title": 48,
+    "subtitle": 26,
+    "h1": 28,
+    "h2": 24,
+    "h3": 22,
+    "h4": 20,
+    "body": 20,
+    "small": 18,
+    "code": 16
+  },
+  "syntax": {
+    "keyword": "569CD6",
+    "annotation": "DCDCAA",
+    "type": "4EC9B0",
+    "string": "CE9178",
+    "number": "B5CEA8",
+    "comment": "6A9955",
+    "default": "D4D4D4"
+  },
+  "overrides": {
+    "infoBox": "E8F4FD",
+    "warningBox": "FEF6E6"
+  }
+}

@@ -9,6 +9,7 @@
  */
 
 const ExcelJS = require('exceljs');
+const xlsxUtils = require('../../lib/xlsx-utils');
 
 const DEFAULT_COLORS = {
   primary: '0E2841',
@@ -21,13 +22,20 @@ const DEFAULT_COLORS = {
   infoBoxText: '0E2841',
   warningBox: 'FFF2CC',
   warningBoxText: '8B4513',
+  accent: 'E97132',
 };
 
 const DEFAULT_FONTS = { default: 'Malgun Gothic', code: 'Consolas' };
 
 // Excel 전용 사이즈 (DOCX 테마 sizes 무시)
-const XLSX_SIZES = { h3: 11, h4: 10, header: 10, body: 10, code: 9 };
-const ROW_HEIGHTS = { header: 20, body: 16, h3: 24 };
+const XLSX_SIZES = {
+  h3: 11, h4: 10, header: 10, body: 10, code: 9,
+  kpiValue: 22, kpiTitle: 10, kpiSubtitle: 9,
+};
+const ROW_HEIGHTS = {
+  header: 20, body: 16, h3: 24, summary: 20,
+  kpiTop: 32, kpiBottom: 18,
+};
 
 function createTemplate(theme = {}) {
   const C = { ...DEFAULT_COLORS, ...(theme.colors || {}) };
@@ -61,7 +69,8 @@ function createTemplate(theme = {}) {
     await wb.xlsx.writeFile(filePath);
   }
 
-  function addSheet(wb, name) {
+  function addSheet(wb, name, opts) {
+    const sheetOpts = opts || {};
     let safeName = name.replace(/[\\/*?\[\]:]/g, ' ').trim().substring(0, 31);
     if (!safeName) safeName = 'Sheet';
     let finalName = safeName;
@@ -72,15 +81,13 @@ function createTemplate(theme = {}) {
       idx++;
     }
     const sheet = wb.addWorksheet(finalName);
-    // 인쇄 설정: A4 가로, 커스텀 여백 0.5in, 가로 중앙 정렬
+    const orientation = sheetOpts.orientation || 'landscape';
     sheet.pageSetup = {
-      paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      paperSize: 9, orientation, fitToPage: true, fitToWidth: 1, fitToHeight: 0,
       horizontalCentered: true,
       margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 },
     };
-    // 뷰 설정: 그리드라인 OFF (모던 클린 스타일)
     sheet.views = [{ zoomScale: 100, showGridLines: false }];
-    // 인쇄 푸터: 페이지 번호
     sheet.headerFooter = { oddFooter: '&C&P / &N' };
     return sheet;
   }
@@ -140,15 +147,19 @@ function createTemplate(theme = {}) {
     return row + 1;
   }
 
-  function writeTable(sheet, startRow, headers, widths, rows) {
+  function writeTable(sheet, startRow, headers, widths, rows, opts) {
+    const options = opts || {};
+    const columnDefs = options.columnDefs || {};
+    const enableSemantic = options.semanticColors || false;
+    const enableRichText = options.richText !== false;
     let r = startRow;
+
     for (let c = 0; c < headers.length; c++) {
       const col = sheet.getColumn(c + 1);
       const newWidth = widths[c] || 15;
       if (!col.width || col.width < newWidth) col.width = newWidth;
     }
 
-    // 헤더 행 (하단 medium 테두리로 데이터와 시각적 분리)
     const headerRow = sheet.getRow(r);
     headerRow.height = ROW_HEIGHTS.header;
     const headerBottomBorder = { style: 'medium', color: { argb: 'FF' + C.primary } };
@@ -160,7 +171,10 @@ function createTemplate(theme = {}) {
       cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
       cell.border = { top: thinBorder, bottom: headerBottomBorder, left: thinBorder, right: thinBorder };
     }
+    const headerRowNum = r;
     r++;
+
+    const dataStartRow = r;
 
     for (let ri = 0; ri < rows.length; ri++) {
       const dataRow = sheet.getRow(r);
@@ -168,15 +182,171 @@ function createTemplate(theme = {}) {
       const isAlt = ri % 2 === 1;
       for (let c = 0; c < headers.length; c++) {
         const cell = dataRow.getCell(c + 1);
-        cell.value = (rows[ri] && rows[ri][c]) || '';
+        const rawValue = (rows[ri] && rows[ri][c]) || '';
+        const headerName = headers[c].trim();
+        const colDef = columnDefs[headerName] || {};
+        const colType = colDef.type || 'text';
+
+        if (colType !== 'text' && colType !== 'status' && colType !== 'code') {
+          if (colDef.formula) {
+            const formulaStr = xlsxUtils.resolveFormula(
+              colDef.formula, headers, headerName, r, null
+            );
+            cell.value = { formula: formulaStr };
+          } else {
+            const converted = xlsxUtils.convertCellValue(rawValue, colType);
+            cell.value = converted.value;
+            if (converted.numFmt) cell.numFmt = converted.numFmt;
+          }
+        } else if (enableRichText && rawValue) {
+          const richValue = xlsxUtils.parseInlineMarkdown(rawValue, {
+            defaultFont: F.default, codeFont: F.code, fontSize: S.body, colors: { text: C.text },
+          });
+          cell.value = richValue;
+        } else {
+          cell.value = rawValue;
+        }
+
         cell.font = bodyFont(S.body);
         if (isAlt) cell.fill = altRowFill();
         cell.alignment = { vertical: 'middle', wrapText: true };
         cell.border = allBorders;
+
+        if (colType === 'number' || colType === 'percentage' || colType === 'date') {
+          cell.alignment = { vertical: 'middle', horizontal: 'right', wrapText: true };
+        }
+        if (colType === 'code') {
+          cell.font = { name: F.code, size: S.body, color: { argb: 'FF' + C.text } };
+        }
+
+        if (colType === 'status' || (enableSemantic && typeof cell.value === 'string')) {
+          xlsxUtils.applySemanticColor(cell, String(rawValue), options.customSemanticMap);
+        }
       }
       r++;
     }
+
+    const dataEndRow = r - 1;
+    sheet._lastTable = { headerRowNum, dataStartRow, dataEndRow, headers, columnDefs };
+
     return r;
+  }
+
+  function writeSummaryRow(sheet, row, overrides) {
+    const tableInfo = sheet._lastTable;
+    if (!tableInfo) return row;
+
+    const ov = overrides || {};
+    const label = ov.label || '합계';
+    const headers = tableInfo.headers;
+    const colDefs = ov.columnDefs || tableInfo.columnDefs || {};
+    const dataStartRow = tableInfo.dataStartRow;
+    const dataEndRow = tableInfo.dataEndRow;
+
+    const summaryR = sheet.getRow(row);
+    summaryR.height = ROW_HEIGHTS.summary;
+
+    let labelWritten = false;
+    for (let c = 0; c < headers.length; c++) {
+      const cell = summaryR.getCell(c + 1);
+      const headerName = headers[c].trim();
+      const colDef = colDefs[headerName] || {};
+      const summaryFn = colDef.summary;
+
+      if (summaryFn) {
+        const cl = xlsxUtils.colLetter(c);
+        const range = `${cl}${dataStartRow}:${cl}${dataEndRow}`;
+        let formula;
+        switch (summaryFn) {
+          case 'sum': formula = `SUM(${range})`; break;
+          case 'average': formula = `AVERAGE(${range})`; break;
+          case 'count': formula = `COUNTA(${range})`; break;
+          case 'min': formula = `MIN(${range})`; break;
+          case 'max': formula = `MAX(${range})`; break;
+          default: formula = null;
+        }
+        if (formula) {
+          cell.value = { formula };
+          if (colDef.type === 'percentage') cell.numFmt = '0.0%';
+          else if (colDef.type === 'number') cell.numFmt = '#,##0';
+        }
+        cell.alignment = { vertical: 'middle', horizontal: 'right' };
+      } else if (!labelWritten) {
+        cell.value = label;
+        labelWritten = true;
+        cell.alignment = { vertical: 'middle', horizontal: 'left' };
+      } else {
+        cell.value = '';
+        cell.alignment = { vertical: 'middle' };
+      }
+
+      cell.font = bodyFont(S.body, { bold: true });
+      cell.border = {
+        top: { style: 'medium', color: { argb: 'FF' + C.primary } },
+        bottom: thinBorder, left: thinBorder, right: thinBorder,
+      };
+    }
+    return row + 1;
+  }
+
+  function writeKpiCard(sheet, startRow, startCol, card) {
+    const colSpan = 2;
+    const endCol = startCol + colSpan - 1;
+
+    let bgColor, fgColor;
+    switch (card.color) {
+      case 'primary': bgColor = C.primary; fgColor = C.white; break;
+      case 'accent': bgColor = C.accent; fgColor = C.white; break;
+      case 'success': bgColor = '375623'; fgColor = 'FFFFFF'; break;
+      case 'error': bgColor = 'C62828'; fgColor = 'FFFFFF'; break;
+      default: bgColor = card.color || C.primary; fgColor = C.white;
+    }
+
+    sheet.mergeCells(startRow, startCol, startRow, endCol);
+    const valueRow = sheet.getRow(startRow);
+    valueRow.height = ROW_HEIGHTS.kpiTop;
+    const valueCell = valueRow.getCell(startCol);
+    valueCell.value = card.value != null ? card.value : '';
+    valueCell.font = { name: F.default, size: S.kpiValue, bold: true, color: { argb: 'FF' + fgColor } };
+    valueCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + bgColor } };
+    valueCell.alignment = { vertical: 'bottom', horizontal: 'center' };
+    valueCell.border = { top: thinBorder, left: thinBorder, right: thinBorder };
+
+    const subtitleRowNum = startRow + 1;
+    sheet.mergeCells(subtitleRowNum, startCol, subtitleRowNum, endCol);
+    const subRow = sheet.getRow(subtitleRowNum);
+    subRow.height = ROW_HEIGHTS.kpiBottom;
+    const subCell = subRow.getCell(startCol);
+    let titleText = card.title || '';
+    if (card.subtitle) titleText += `  (${card.subtitle})`;
+    if (card.trend) {
+      const arrow = card.trend === 'up' ? '↑' : card.trend === 'down' ? '↓' : '';
+      titleText += ` ${arrow}`;
+    }
+    subCell.value = titleText;
+    subCell.font = { name: F.default, size: S.kpiTitle, color: { argb: 'FF' + fgColor } };
+    subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + bgColor } };
+    subCell.alignment = { vertical: 'top', horizontal: 'center' };
+    subCell.border = { bottom: thinBorder, left: thinBorder, right: thinBorder };
+
+    return { nextRow: subtitleRowNum + 1, nextCol: endCol + 1 };
+  }
+
+  function writeMergedHeader(sheet, row, mergeRanges) {
+    const r = sheet.getRow(row);
+    r.height = ROW_HEIGHTS.header;
+    for (const range of mergeRanges) {
+      if (range.fromCol !== range.toCol) {
+        sheet.mergeCells(row, range.fromCol, row, range.toCol);
+      }
+      const cell = r.getCell(range.fromCol);
+      cell.value = range.text;
+      cell.font = headerFont();
+      cell.fill = headerFill();
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      cell.border = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
+    }
+    return row + 1;
   }
 
   function writeCodeBlock(sheet, row, codeLines, colCount) {
@@ -208,7 +378,8 @@ function createTemplate(theme = {}) {
   return {
     createWorkbook, saveWorkbook, addSheet, addCoverSheet,
     writeTitle, writeText, writeBullet, writeInfoBox, writeWarningBox,
-    writeTable, writeCodeBlock, applyAutoFilter, freezeHeaderRow, setColumnWidths,
+    writeTable, writeSummaryRow, writeKpiCard, writeMergedHeader,
+    writeCodeBlock, applyAutoFilter, freezeHeaderRow, setColumnWidths,
   };
 }
 
