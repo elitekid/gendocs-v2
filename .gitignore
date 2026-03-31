@@ -26,8 +26,8 @@ templates/docx/custom/*
 !templates/docx/custom/.gitkeep
 
 # Company assets
-assets/ROAD.png
-assets/road-logo.png
+assets/
+images/
 
 # Regression test baselines (user-specific)
 tests/golden/*
