@@ -3,6 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "description": "Claude Code 문서 생성 툴킷 — MD를 원본으로 모든 형태의 비즈니스 문서를 자동 생성",
+  "scripts": {
+    "convert": "node lib/convert.js",
+    "validate": "python -X utf8 tools/validate-docx.py",
+    "review": "python -X utf8 tools/review-docx.py",
+    "lint": "python -X utf8 tools/lint-md.py",
+    "extract": "python -X utf8 tools/extract-docx.py",
+    "score": "node tools/score-docx.js",
+    "test": "node tools/regression-test.js",
+    "baseline": "node tools/create-baselines.js",
+    "audit": "node tools/pipeline-audit.js"
+  },
   "dependencies": {
     "adm-zip": "^0.5.16",
     "docx": "^9.1.1",
