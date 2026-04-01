@@ -25,9 +25,10 @@ diagrams/*.png
 templates/docx/custom/*
 !templates/docx/custom/.gitkeep
 
-# Company assets
+# Company assets & plans
 assets/
 images/
+docs/
 
 # Regression test baselines (user-specific)
 tests/golden/*
