@@ -1,0 +1,62 @@
+{
+  "_generator": "extract-style-profile.py",
+  "_source": "C:/Users/USER/Desktop/유스가랴/개발/우리은행/큐뱅 HMAC 인증 및 암복호화 가이드_v1.3.pdf",
+  "_unit": "sizes are in half-point (docx convention, 1pt = 2)",
+  "_pageCount": 14,
+  "colors": {
+    "primary": "000000",
+    "secondary": "000000",
+    "text": "000000",
+    "h1Color": "000000",
+    "h2Color": "000000",
+    "h3Color": "434343",
+    "h4Color": "000000",
+    "tableHeaderBg": "D8D9D8",
+    "tableHeaderText": "000000",
+    "altRow": "F1F2F1",
+    "headerFont": "D9D9D9",
+    "footerFont": "CCCCCC"
+  },
+  "fonts": {
+    "default": "Malgun Gothic",
+    "code": "Malgun Gothic",
+    "header": "Batang",
+    "footer": "Batang"
+  },
+  "sizes": {
+    "title": 40,
+    "h2": 32,
+    "h3": 28,
+    "body": 22,
+    "small": 18,
+    "code": 14,
+    "headerFooter": 22,
+    "tableBody": 22,
+    "tableHeader": 22
+  },
+  "code": {
+    "mode": "light",
+    "lightBg": "FFFFFF",
+    "lightBorder": "000000",
+    "borderWidth": 1
+  },
+  "syntax": {
+    "keyword": "000000",
+    "annotation": "000000",
+    "type": "000000",
+    "string": "000000",
+    "number": "000000",
+    "comment": "000000",
+    "default": "000000"
+  },
+  "header": {
+    "text": "간편결제 중계서비스 - 간편결제사 연동 가이드",
+    "border": true
+  },
+  "cover": {
+    "style": "centered",
+    "logoWidth": 317,
+    "logoHeight": 73
+  },
+  "orientation": "portrait"
+}
