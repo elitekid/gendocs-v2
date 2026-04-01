@@ -3,7 +3,8 @@ globs:
   - "tools/validate-docx.py"
   - "tools/review-docx.py"
   - "tools/lint-md.py"
-  - "tools/regression-test.js"
+  - "tests/unit/**"
+  - "tests/smoke/**"
   - "tools/score-docx.js"
   - "tools/pipeline-audit.js"
   - "lib/scoring.js"
@@ -60,18 +61,15 @@ python -X utf8 tools/review-docx.py output/문서.docx --json
 | 제목 구조 | DUPLICATE_HEADING / LONG_SECTION | WARN / INFO | 연속 동일 제목, H3 없는 긴 섹션 |
 | 이미지 비율 | NARROW_IMAGE / FLAT_IMAGE | WARN | 다이어그램 폭 < 30% 또는 높이 < 80pt |
 
-## 회귀 테스트
-
-converter-core.js, templates, SKILL.md 등 공통 코드 수정 시 기존 문서가 깨지지 않는지 자동 검증.
+## 테스트
 
 ```bash
-node tools/create-baselines.js [--force]   # baseline 생성/갱신
-node tools/regression-test.js              # 회귀 테스트
-node tools/regression-test.js --verbose    # 상세 diff
-node tools/regression-test.js --name xxx   # 특정 문서만
+npm test              # 단위 테스트 (순수 함수 검증, 1초)
+npm run test:smoke    # 스모크 테스트 (examples 3개 변환 확인, ~15초)
+npm run test:all      # 전체
 ```
 
-**비교 허용 범위**: estimatedPages +/-2, bullets +/-2, warnCount 감소만, 나머지 정확 일치.
+코드 수정 후 `npm test` 반드시 실행. 큰 변경 시 `npm run test:all`.
 
 ## 성공 패턴 DB
 

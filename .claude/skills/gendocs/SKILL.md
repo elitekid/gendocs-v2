@@ -257,7 +257,7 @@ sequenceDiagram
 
 4. **반복 패턴 여부 판단**
    - 발견한 문제가 이 문서만의 문제가 아니라 반복될 패턴이면, 원인이 된 규칙(SKILL.md, MEMORY.md 등)도 함께 수정
-   - 규칙 수정 시: `node tools/regression-test.js`를 실행하여 기존 문서가 깨지지 않는지 확인
+   - 규칙 수정 시: `npm test`를 실행하여 핵심 함수가 깨지지 않는지 확인
 
 5. **배치(batch) 처리 시에도 예외 없음**
    - 여러 문서를 한 번에 처리하더라도, 각 MD에 대해 셀프리뷰를 수행
@@ -621,7 +621,7 @@ node tools/extract-patterns.js --audit    # 출처 분포 + 다양성 메트릭 
 재실행: node lib/convert.js doc-configs/{파일명}.json
 검증:   node lib/convert.js doc-configs/{파일명}.json --validate
 재검증: python -X utf8 tools/validate-docx.py output/{파일명}.docx
-회귀:   node tools/regression-test.js
+테스트: npm test
 ```
 
 ---

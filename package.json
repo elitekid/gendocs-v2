@@ -10,8 +10,9 @@
     "lint": "python -X utf8 tools/lint-md.py",
     "extract": "python -X utf8 tools/extract-docx.py",
     "score": "node tools/score-docx.js",
-    "test": "node tools/regression-test.js",
-    "baseline": "node tools/create-baselines.js",
+    "test": "node tests/unit/run-all.js",
+    "test:smoke": "node tests/smoke/smoke-test.js",
+    "test:all": "npm run test && npm run test:smoke",
     "audit": "node tools/pipeline-audit.js"
   },
   "dependencies": {

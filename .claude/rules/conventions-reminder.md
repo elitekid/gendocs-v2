@@ -6,4 +6,5 @@
 - 셀프리뷰(lint-md + AI 리뷰) 완료 전 변환 단계 진행 금지
 - 템플릿 수정 금지 — doc-config만 새로 작성
 - 수정 후 페이지 수 10%↑ 시 롤백
+- 코드 수정 후 `npm test` 필수
 - 세부 규칙: `.claude/rules/` 참조 (theme, validation, diagram, xlsx)

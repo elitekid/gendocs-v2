@@ -48,8 +48,11 @@ python -X utf8 tools/lint-md.py source/문서.md --json
 # DOCX 텍스트 추출 (기존 문서 → MD)
 python -X utf8 tools/extract-docx.py output/문서.docx --json
 
-# 회귀 테스트 (공통 코드 수정 후 반드시 실행)
-node tools/regression-test.js
+# 단위 테스트 (코드 수정 후 반드시 실행)
+npm test
+
+# 스모크 테스트 (examples 변환 확인)
+npm run test:smoke
 
 # 품질 점수
 node tools/score-docx.js doc-configs/문서.json --save
@@ -129,7 +132,7 @@ gendocs/
 │   └── xlsx/ (basic.js, data-spec.js)
 ├── converters/                      ← 레거시 전용 변환 (커스텀 로직용)
 ├── examples/                        ← 성공 사례 (sample-api, sample-batch, sample-code-def)
-├── tests/                           ← 회귀 테스트 (golden/, scores/)
+├── tests/                           ← 단위 테스트 (unit/) + 스모크 테스트 (smoke/)
 └── tools/                           ← 검증·유틸리티
 ```
 

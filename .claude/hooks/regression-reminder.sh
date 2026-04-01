@@ -15,4 +15,4 @@ if echo "$FILE" | grep -qE '(patterns\.json|reflections\.json|scoring\.js)$'; th
 fi
 
 BASENAME=$(basename "$FILE")
-echo "[regression] ${BASENAME} 수정됨 — 작업 완료 후 회귀 테스트 필요: node tools/regression-test.js"
+echo "[test] ${BASENAME} 수정됨 — 작업 완료 후 테스트 필요: npm test"
