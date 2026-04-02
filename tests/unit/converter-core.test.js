@@ -35,13 +35,13 @@ assert.strictEqual(t3.length, 0);
 // 빈 입력
 assert.deepStrictEqual(parseTable([]), []);
 
-// bold/code 마크다운 제거
+// bold/code 마크다운 보존 (professional.js parseInlineFormatting이 처리)
 const t4 = parseTable([
   '| **항목** | `값` |',
   '|---|---|',
   '| a | b |',
 ]);
-assert.deepStrictEqual(t4[0], ['항목', '값']);
+assert.deepStrictEqual(t4[0], ['**항목**', '`값`']);
 
 // ============================================================
 // calculateTableWidths

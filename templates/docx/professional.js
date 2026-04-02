@@ -8,7 +8,8 @@
 const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   HeadingLevel, BorderStyle, WidthType, ShadingType, AlignmentType,
-  LevelFormat, PageBreak, ImageRun, Header, Footer, PageNumber, TabStopType, TabStopPosition
+  LevelFormat, PageBreak, ImageRun, Header, Footer, PageNumber, TabStopType, TabStopPosition,
+  TableOfContents
 } = require('docx');
 const fs = require('fs');
 const path = require('path');
@@ -81,9 +82,11 @@ function createTemplate(theme = {}) {
   const _contentWidth = _isPortrait ? 9360 : 12960;  // DXA
   const _rightTab = _isPortrait ? 9900 : 13500;
 
-  // 테이블 헤더: 독립 색상 슬롯 (null → primary/white fallback)
+  // 테이블 헤더: 독립 슬롯 (null → 기존 동작 fallback)
   const _tableHeaderBg = _COLORS.tableHeaderBg || _COLORS.primary;
   const _tableHeaderText = _COLORS.tableHeaderText || _COLORS.white;
+  const _tableHeaderBold = _COLORS.tableHeaderBold !== false; // null/undefined → true
+  const _tableHeaderAlign = _COLORS.tableHeaderAlign || null; // null → 기존 (left)
 
   // 헤딩 색상: 레벨별 독립 슬롯 (null → 기존 색상 fallback)
   const _h1Color = _COLORS.h1Color || _COLORS.primary;
@@ -146,23 +149,24 @@ function createTemplate(theme = {}) {
   // ============================================================
 
   function _headerCell(text, width) {
+    const align = _tableHeaderAlign === 'center' ? AlignmentType.CENTER : undefined;
     return new TableCell({
       borders: _borders, width: { size: width, type: WidthType.DXA }, shading: _headerShading, margins: _cellMargins,
-      children: [new Paragraph({ children: [new TextRun({ text, bold: true, color: _tableHeaderText, font: _FONTS.default, size: _tableHeaderSize })] })]
+      children: [new Paragraph({ alignment: align, children: [new TextRun({ text, bold: _tableHeaderBold, color: _tableHeaderText, font: _FONTS.default, size: _tableHeaderSize })] })]
     });
   }
 
   function _bodyCell(text, width, useAlt = false) {
     return new TableCell({
       borders: _borders, width: { size: width, type: WidthType.DXA }, shading: useAlt ? _altShading : null, margins: _cellMargins,
-      children: [new Paragraph({ children: [new TextRun({ text, font: _FONTS.default, size: _tableBodySize })] })]
+      children: [new Paragraph({ children: parseInlineFormatting(text, _tableBodySize) })]
     });
   }
 
   function _headerCellCenter(text, width) {
     return new TableCell({
       borders: _borders, width: { size: width, type: WidthType.DXA }, shading: _headerShading, margins: _cellMargins,
-      children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text, bold: true, color: _tableHeaderText, font: _FONTS.default, size: _tableHeaderSize })] })]
+      children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text, bold: _tableHeaderBold, color: _tableHeaderText, font: _FONTS.default, size: _tableHeaderSize })] })]
     });
   }
 
@@ -194,13 +198,17 @@ function createTemplate(theme = {}) {
   }
 
   function text(content, options = {}) {
-    return new Paragraph({
-      spacing: options.spacing || {},
-      children: [new TextRun({
-        text: content, font: _FONTS.default, size: options.size || _SIZES.body,
-        bold: options.bold || false, italics: options.italics || false, color: options.color || _COLORS.text
-      })]
-    });
+    const fontSize = options.size || _SIZES.body;
+    const textColor = options.color || _COLORS.text;
+    let children;
+    if (options.bold) {
+      // 전체 bold 지정 시 기존 동작 유지
+      children = [new TextRun({ text: content, font: _FONTS.default, size: fontSize, bold: true, italics: options.italics || false, color: textColor })];
+    } else {
+      // 인라인 bold/code 파싱
+      children = parseInlineFormatting(content, fontSize, textColor);
+    }
+    return new Paragraph({ spacing: options.spacing || {}, children });
   }
 
   function parseInlineFormatting(textContent, fontSize = _SIZES.body, textColor = _COLORS.text) {
@@ -221,6 +229,19 @@ function createTemplate(theme = {}) {
     const children = parseInlineFormatting(content, _SIZES.body, bulletColor);
     return new Paragraph({
       numbering: { reference: "bullets", level: 0 }, spacing: options.spacing || {},
+      children
+    });
+  }
+
+  function numberedItem(number, content, options = {}) {
+    const textColor = options.color || _COLORS.text;
+    const children = [
+      new TextRun({ text: `${number}. `, font: _FONTS.default, size: _SIZES.body, color: textColor }),
+      ...parseInlineFormatting(content, _SIZES.body, textColor)
+    ];
+    return new Paragraph({
+      indent: { left: 720, hanging: 360 },
+      spacing: options.spacing || { before: 60, after: 60 },
       children
     });
   }
@@ -263,9 +284,7 @@ function createTemplate(theme = {}) {
               children: [
                 new Paragraph({
                   spacing: { before: 0, after: 0 },
-                  children: [
-                    new TextRun({ text: content, font: _FONTS.default, size: _SIZES.small, color: _COLORS.primary })
-                  ]
+                  children: parseInlineFormatting(content, _SIZES.small, _COLORS.primary)
                 })
               ]
             })
@@ -295,7 +314,7 @@ function createTemplate(theme = {}) {
                 new Paragraph({
                   spacing: { before: 0, after: 0 },
                   children: [
-                    new TextRun({ text: content, font: _FONTS.default, size: _SIZES.small, color: _COLORS.warningBoxText, italics: true })
+                    ...parseInlineFormatting(content, _SIZES.small, _COLORS.warningBoxText)
                   ]
                 })
               ]
@@ -760,6 +779,7 @@ function createTemplate(theme = {}) {
     }
 
     return new Document({
+      features: { updateFields: true },
       styles: _docStyles,
       numbering: _numbering,
       sections: [sectionProps]
@@ -863,7 +883,7 @@ function createTemplate(theme = {}) {
   // ============================================================
 
   return {
-    h1, h2, h3, h4, text, bullet, note, labelText, infoBox, warningBox, flowBox, pageBreak, spacer,
+    h1, h2, h3, h4, text, bullet, numberedItem, note, labelText, infoBox, warningBox, flowBox, pageBreak, spacer,
     createCodeBlock, createFlowBlock, createJsonBlock, createSyntaxCodeBlock, createImage,
     createSimpleTable, createTable,
     createCoverPage,
