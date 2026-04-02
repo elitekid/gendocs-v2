@@ -121,16 +121,16 @@ function createTemplate(theme = {}) {
     default: { document: { run: { font: _FONTS.default, size: _SIZES.body } } },
     paragraphStyles: [
       { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: _SIZES.h1, bold: _h1Bold, font: _FONTS.default, color: _h1Color },
+        run: { size: _SIZES.h1, ...(_h1Bold ? { bold: true } : {}), font: _FONTS.default, color: _h1Color },
         paragraph: { spacing: _spacing.h1, outlineLevel: 0 } },
       { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: _SIZES.h2, bold: _h2Bold, font: _FONTS.default, color: _h2Color },
+        run: { size: _SIZES.h2, ...(_h2Bold ? { bold: true } : {}), font: _FONTS.default, color: _h2Color },
         paragraph: { spacing: _spacing.h2, outlineLevel: 1 } },
       { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: _SIZES.h3, bold: _h3Bold, font: _FONTS.default, color: _h3Color },
+        run: { size: _SIZES.h3, ...(_h3Bold ? { bold: true } : {}), font: _FONTS.default, color: _h3Color },
         paragraph: { spacing: _spacing.h3, outlineLevel: 2 } },
       { id: "Heading4", name: "Heading 4", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: _SIZES.h4 || _SIZES.body, bold: _h4Bold, font: _FONTS.default, color: _h4Color },
+        run: { size: _SIZES.h4 || _SIZES.body, ...(_h4Bold ? { bold: true } : {}), font: _FONTS.default, color: _h4Color },
         paragraph: { spacing: _spacing.h4, outlineLevel: 3 } }
     ]
   };
@@ -143,12 +143,13 @@ function createTemplate(theme = {}) {
     }]
   };
 
+  const _pageMargin = theme.pageMargin || { top: 1080, right: 1440, bottom: 1080, left: 1440 };
   const _pageSettings = {
     page: {
       size: _isPortrait
         ? { width: 12240, height: 15840 }   // Portrait A4
         : { width: 15840, height: 12240 },   // Landscape A4
-      margin: { top: 1080, right: 1440, bottom: 1080, left: 1440 }
+      margin: _pageMargin
     }
   };
 
@@ -160,7 +161,7 @@ function createTemplate(theme = {}) {
     const align = _tableHeaderAlign === 'center' ? AlignmentType.CENTER : undefined;
     return new TableCell({
       borders: _borders, width: { size: width, type: WidthType.DXA }, shading: _headerShading, margins: _cellMargins,
-      children: [new Paragraph({ alignment: align, children: [new TextRun({ text, bold: _tableHeaderBold, color: _tableHeaderText, font: _FONTS.default, size: _tableHeaderSize })] })]
+      children: [new Paragraph({ alignment: align, children: [new TextRun({ text, ...(_tableHeaderBold ? { bold: true } : {}), color: _tableHeaderText, font: _FONTS.default, size: _tableHeaderSize })] })]
     });
   }
 
@@ -174,7 +175,7 @@ function createTemplate(theme = {}) {
   function _headerCellCenter(text, width) {
     return new TableCell({
       borders: _borders, width: { size: width, type: WidthType.DXA }, shading: _headerShading, margins: _cellMargins,
-      children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text, bold: _tableHeaderBold, color: _tableHeaderText, font: _FONTS.default, size: _tableHeaderSize })] })]
+      children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text, ...(_tableHeaderBold ? { bold: true } : {}), color: _tableHeaderText, font: _FONTS.default, size: _tableHeaderSize })] })]
     });
   }
 
@@ -646,13 +647,20 @@ function createTemplate(theme = {}) {
     });
   }
 
-  function createTable(headers, widths, rows) {
+  function createTable(headers, widths, rows, options = {}) {
+    const effectiveRows = [...rows];
+    if (options.minRows && effectiveRows.length < options.minRows) {
+      const emptyRow = new Array(headers.length).fill('');
+      while (effectiveRows.length < options.minRows) {
+        effectiveRows.push(emptyRow);
+      }
+    }
     return new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
       columnWidths: widths,
       rows: [
         new TableRow({ children: headers.map((h, i) => _headerCell(h, widths[i])) }),
-        ...rows.map((row, ri) => new TableRow({
+        ...effectiveRows.map((row, ri) => new TableRow({
           children: row.map((cell, ci) => _bodyCell(cell, widths[ci], ri % 2 === 0))
         }))
       ]
@@ -691,17 +699,22 @@ function createTemplate(theme = {}) {
       _pushLogo(1200, 600);
       elements.push(new Paragraph({ spacing: { before: 2400 }, children: [] }));
       // title에 \n이 있으면 줄바꿈 분리
+      const _isTitleBold = _cover.titleBold !== false;
       const titleLines = title.split('\n');
       for (const line of titleLines) {
+        const runOpts = { text: line, size: _titleSize, font: _FONTS.default, color: _COLORS.text };
+        runOpts.bold = _isTitleBold;
         elements.push(new Paragraph({
           alignment: AlignmentType.CENTER, spacing: { after: 200 },
-          children: [new TextRun({ text: line, bold: true, size: _titleSize, font: _FONTS.default, color: _COLORS.text })]
+          children: [new TextRun(runOpts)]
         }));
       }
       if (subtitle) {
+        const runOpts = { text: subtitle, size: _titleSize, font: _FONTS.default, color: _COLORS.text };
+        runOpts.bold = _isTitleBold;
         elements.push(new Paragraph({
           alignment: AlignmentType.CENTER, spacing: { after: 200 },
-          children: [new TextRun({ text: subtitle, bold: true, size: _titleSize, font: _FONTS.default, color: _COLORS.text })]
+          children: [new TextRun(runOpts)]
         }));
       }
       // 하단 날짜/버전 (projectInfo) — 순서 + 크기 제어
@@ -717,6 +730,7 @@ function createTemplate(theme = {}) {
         orderedInfo = _cover.projectInfoOrder.map(k => keyMap[k]).filter(Boolean);
         if (orderedInfo.length === 0) orderedInfo = projectInfo;
       }
+      const _isInfoBold = _cover.projectInfoBold !== false;
       for (let idx = 0; idx < orderedInfo.length; idx++) {
         const row = orderedInfo[idx];
         const lbl = (row.label || '').toLowerCase();
@@ -724,7 +738,7 @@ function createTemplate(theme = {}) {
         const sz = isVersion && _cover.versionSize ? _cover.versionSize : _SIZES.body;
         elements.push(new Paragraph({
           alignment: AlignmentType.CENTER, spacing: { after: 100 },
-          children: [new TextRun({ text: row.value, bold: true, font: _FONTS.default, size: sz, color: _COLORS.text })]
+          children: [new TextRun({ text: row.value, bold: _isInfoBold, font: _FONTS.default, size: sz, color: _COLORS.text })]
         }));
       }
       elements.push(new Paragraph({ children: [new PageBreak()] }));

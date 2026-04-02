@@ -397,6 +397,43 @@ def extract_from_pdf(pdf_path):
             break
 
     # ================================================================
+    # 페이지 마진 추출
+    # ================================================================
+    margin_lefts = []; margin_rights = []; margin_tops = []; margin_bottoms = []
+    for pi in range(page_count):
+        page = doc[pi]
+        pw, ph = page.rect.width, page.rect.height
+        pg_spans = []
+        for block in page.get_text('dict')['blocks']:
+            if block['type'] != 0: continue
+            for line in block['lines']:
+                for span in line['spans']:
+                    if span['text'].strip():
+                        pg_spans.append(span['bbox'])
+        if not pg_spans:
+            continue
+        min_x = min(b[0] for b in pg_spans)
+        max_x = max(b[2] for b in pg_spans)
+        min_y = min(b[1] for b in pg_spans)
+        max_y = max(b[3] for b in pg_spans)
+        margin_lefts.append(min_x)
+        margin_rights.append(pw - max_x)
+        margin_tops.append(min_y)
+        margin_bottoms.append(max_y)  # 나중에 ph - max_y 계산
+
+    page_margin = None
+    if margin_lefts:
+        # 머릿글/바닥글 포함 최소 마진 사용 (pt → DXA: ×20)
+        ml = round(sorted(margin_lefts)[len(margin_lefts)//2] * 20)
+        mr = round(sorted(margin_rights)[len(margin_rights)//2] * 20)
+        mt = round(sorted(margin_tops)[len(margin_tops)//2] * 20)
+        # bottom: ph - max_y의 중앙값
+        bottom_pts = [ph - my for my, ph_i in zip(margin_bottoms,
+                      [doc[i].rect.height for i in range(len(margin_bottoms))])]
+        mb = round(sorted(bottom_pts)[len(bottom_pts)//2] * 20)
+        page_margin = {'top': mt, 'right': mr, 'bottom': mb, 'left': ml}
+
+    # ================================================================
     # 프로파일 조립
     # ================================================================
     font_name_map = {
@@ -460,6 +497,10 @@ def extract_from_pdf(pdf_path):
         'cover': cover_info,
         'orientation': 'portrait' if page_height > page_width else 'landscape',
     }
+
+    # pageMargin
+    if page_margin:
+        profile['pageMargin'] = page_margin
 
     # sizes (None 제거)
     size_entries = {
