@@ -397,6 +397,327 @@ def extract_from_pdf(pdf_path):
             break
 
     # ================================================================
+    # 13-a. 테이블 셀 패딩 + 테두리 추출
+    # ================================================================
+    cell_margins_info = None
+    table_border_info = None
+    if table_header_bg:
+        # 헤더 배경 rect와 내부 텍스트 위치 차이로 셀 패딩 추정
+        for pi in range(1, min(4, page_count)):
+            page = doc[pi]
+            header_rects = []
+            for d in page.get_drawings():
+                if not d.get('fill'):
+                    continue
+                r, g, b = [int(c * 255) for c in d['fill'][:3]]
+                hx = f'{r:02X}{g:02X}{b:02X}'
+                if hx == table_header_bg:
+                    rect = d['rect']
+                    w, h = rect[2] - rect[0], rect[3] - rect[1]
+                    if w > 20 and 10 < h < 40:
+                        header_rects.append(rect)
+            if not header_rects:
+                continue
+            # 첫 헤더 셀의 rect vs 텍스트 x/y offset → 패딩 추정
+            hr = header_rects[0]
+            cell_spans = [s for s in body_spans
+                          if s['page'] == pi and abs(s['y'] - hr[1]) < 20
+                          and s['x'] >= hr[0] - 5 and s['x'] <= hr[2] + 5]
+            if cell_spans and table_header_align != 'center':
+                # center 정렬이면 x offset이 패딩이 아니라 정렬 offset이므로 스킵
+                inner_spans = [s for s in cell_spans
+                               if s['y'] > hr[1] and s['y'] < hr[3] + 5]
+                if inner_spans:
+                    s = inner_spans[0]
+                    pad_left = max(0, s['x'] - hr[0])
+                    pad_top = max(0, s['y'] - hr[1] - s['size'])
+                    pad_left_dxa = round(pad_left * 20)
+                    pad_top_dxa = round(pad_top * 20)
+                    if pad_left_dxa > 20:
+                        cell_margins_info = {
+                            'top': max(pad_top_dxa, 40),
+                            'bottom': max(pad_top_dxa, 40),
+                            'left': max(pad_left_dxa, 40),
+                            'right': max(pad_left_dxa, 40),
+                        }
+            elif cell_spans and table_header_align == 'center':
+                # center 정렬: top 패딩만 추출
+                inner_spans = [s for s in cell_spans
+                               if s['y'] > hr[1] and s['y'] < hr[3] + 5]
+                if inner_spans:
+                    s = inner_spans[0]
+                    pad_top = max(0, s['y'] - hr[1] - s['size'])
+                    pad_top_dxa = round(pad_top * 20)
+                    if pad_top_dxa > 20:
+                        cell_margins_info = {
+                            'top': pad_top_dxa,
+                            'bottom': pad_top_dxa,
+                            'left': 80,  # 기본값 유지
+                            'right': 80,
+                        }
+            break
+
+        # 테두리 굵기: 테이블 주변 라인 drawing에서 추출
+        for pi in range(1, min(4, page_count)):
+            page = doc[pi]
+            for d in page.get_drawings():
+                if d.get('width') and d.get('width') > 0:
+                    items = d.get('items', [])
+                    for item in items:
+                        if item[0] == 're':
+                            rect = item[1]
+                            w, h = rect.width, rect.height
+                            if w > 100 and h < 3:  # 수평선 (테이블 테두리)
+                                line_w = d.get('width', 1)
+                                # pt → 8th of point (docx border size 단위)
+                                border_size = max(1, round(line_w * 8))
+                                table_border_info = {'style': 'single', 'size': border_size}
+                                break
+                    if table_border_info:
+                        break
+            if table_border_info:
+                break
+
+    # ================================================================
+    # 13-b. 불릿 들여쓰기 추출
+    # ================================================================
+    bullet_indents = []
+    if detected_bullet:
+        for s in body_spans:
+            if s['text'].strip() == detected_bullet or (detected_bullet == '-' and s['text'].startswith('- ')):
+                bullet_indents.append(s['x'])
+    list_indent_info = None
+    # 불릿 indent는 페이지 마진 추출 후 계산 (아래에서 처리)
+
+    # ================================================================
+    # 13-c. 목차 들여쓰기 추출
+    # ================================================================
+    toc_indent_info = None
+    if toc_info:
+        for pi in range(min(5, page_count)):
+            page_spans_pi = [s for s in body_spans if s['page'] == pi]
+            page_text = ' '.join(s['text'] for s in page_spans_pi)
+            if '목차' not in page_text or ('...' not in page_text and '…' not in page_text):
+                continue
+            # 목차 항목의 x좌표 분포: H2(왼쪽)와 H3(들여쓰기) 구분
+            toc_xs = [s['x'] for s in page_spans_pi if '...' in s['text'] or '…' in s['text']]
+            if len(toc_xs) >= 3:
+                unique_xs = sorted(set(round(x) for x in toc_xs))
+                if len(unique_xs) >= 2:
+                    indent_pt = unique_xs[1] - unique_xs[0]
+                    if indent_pt > 5:
+                        toc_indent_info = round(indent_pt * 20)  # DXA
+            break
+
+    # ================================================================
+    # 13-d. 부제목 크기 추출
+    # ================================================================
+    subtitle_size = None
+    if cover_spans and size_map.get('title'):
+        title_size_pt = size_map['title']
+        # 표지에서 title보다 작고 body보다 큰 텍스트 = 부제목 후보
+        subtitle_candidates = [s for s in cover_spans
+                               if body_size < s['size'] < title_size_pt]
+        if subtitle_candidates:
+            subtitle_size = Counter(s['size'] for s in subtitle_candidates).most_common(1)[0][0]
+
+    # ================================================================
+    # 13. 단락 간격 추출 (H2/H3 before/after)
+    # ================================================================
+    spacing_info = {}
+    # 본문 span을 페이지별·y좌표별 그룹핑
+    page_lines = defaultdict(list)  # (page, y) -> [spans]
+    for s in body_spans:
+        page_lines[(s['page'], s['y'])].append(s)
+
+    # y좌표 순서대로 정렬하여 연속 라인 간 간격 측정
+    h2_befores = []
+    h2_afters = []
+    h3_befores = []
+    h3_afters = []
+    body_spacings = []
+
+    for pi in range(page_count):
+        ys = sorted(set(y for (p, y) in page_lines if p == pi))
+        if len(ys) < 2:
+            continue
+        for idx in range(len(ys)):
+            y_curr = ys[idx]
+            curr_spans = page_lines[(pi, y_curr)]
+            if not curr_spans:
+                continue
+            curr_size = curr_spans[0]['size']
+            gap_before = (y_curr - ys[idx - 1]) if idx > 0 else None
+            gap_after = (ys[idx + 1] - y_curr) if idx < len(ys) - 1 else None
+
+            if size_map.get('h2') and abs(curr_size - size_map['h2']) < 0.5:
+                if gap_before is not None:
+                    h2_befores.append(gap_before)
+                if gap_after is not None:
+                    h2_afters.append(gap_after)
+            elif size_map.get('h3') and abs(curr_size - size_map['h3']) < 0.5:
+                if gap_before is not None:
+                    h3_befores.append(gap_before)
+                if gap_after is not None:
+                    h3_afters.append(gap_after)
+            elif abs(curr_size - body_size) < 0.5:
+                if gap_after is not None:
+                    body_spacings.append(gap_after)
+
+    def median_val(arr):
+        if not arr:
+            return None
+        s = sorted(arr)
+        return s[len(s) // 2]
+
+    def pt_to_twip(pt):
+        """pt → twip (1pt = 20twip)"""
+        return round(pt * 20) if pt else None
+
+    h2_before_med = median_val(h2_befores)
+    h2_after_med = median_val(h2_afters)
+    h3_before_med = median_val(h3_befores)
+    h3_after_med = median_val(h3_afters)
+    body_spacing_med = median_val(body_spacings)
+
+    if h2_befores or h2_afters or h3_befores or h3_afters:
+        spacing_info = {}
+        if h2_befores or h2_afters:
+            entry = {}
+            if h2_before_med is not None:
+                entry['before'] = pt_to_twip(h2_before_med)
+            if h2_after_med is not None:
+                entry['after'] = pt_to_twip(h2_after_med)
+            if entry:
+                spacing_info['h2'] = entry
+        if h3_befores or h3_afters:
+            entry = {}
+            if h3_before_med is not None:
+                entry['before'] = pt_to_twip(h3_before_med)
+            if h3_after_med is not None:
+                entry['after'] = pt_to_twip(h3_after_med)
+            if entry:
+                spacing_info['h3'] = entry
+        if body_spacing_med:
+            spacing_info['body'] = {'after': pt_to_twip(body_spacing_med)}
+
+    # ================================================================
+    # 14. projectInfoBold 자동 감지 (표지 하단 날짜/버전 bold 여부)
+    # ================================================================
+    project_info_bold = None
+    if bottom_spans:
+        info_bold_count = 0
+        info_total = 0
+        for s in bottom_spans:
+            text = s['text']
+            if re.match(r'\d{4}[./\-]', text) or 'version' in text.lower() or re.match(r'v\d', text.lower()):
+                info_total += 1
+                if s['bold']:
+                    info_bold_count += 1
+        if info_total > 0:
+            project_info_bold = (info_bold_count / info_total) > 0.5
+
+    # ================================================================
+    # 15. 표지 간격 추출 (요소 간 y좌표 차이)
+    # ================================================================
+    cover_spacing = {}
+    if cover_spans:
+        # 요소별 그룹: 로고 후 → 제목 → 부제목 → 정보
+        max_size = max(s['size'] for s in cover_spans)
+        title_y = None
+        info_y = None
+        title_spans_sorted = sorted([s for s in cover_spans if s['size'] == max_size], key=lambda s: s['y'])
+        if title_spans_sorted:
+            title_y = title_spans_sorted[0]['y']
+        if bottom_spans:
+            info_y = bottom_spans[0]['y']
+        if title_y is not None:
+            # 제목 위 여백: title_y를 twip으로 (페이지 상단부터의 거리 - 로고 영역 추정)
+            cover_spacing['titleSpacingBefore'] = pt_to_twip(max(title_y - 200, 50))
+        if title_y is not None and info_y is not None:
+            # 제목~정보 간격
+            cover_spacing['infoSpacingBefore'] = pt_to_twip(info_y - title_y - 40)
+
+    # ================================================================
+    # 16. 테이블 열 너비 자동 추출 (헤더 배경 rect 기반)
+    # ================================================================
+    table_width_suggestions = {}
+    if table_header_bg:
+        for pi in range(page_count):
+            page = doc[pi]
+            # 헤더 배경색 rect만 수집
+            header_cells = []
+            for d in page.get_drawings():
+                if not d.get('fill'):
+                    continue
+                r, g, b = [int(c * 255) for c in d['fill'][:3]]
+                hx = f'{r:02X}{g:02X}{b:02X}'
+                if hx != table_header_bg:
+                    continue
+                rect = d['rect']
+                w, h = rect[2] - rect[0], rect[3] - rect[1]
+                if w > 20 and 10 < h < 40:
+                    header_cells.append({'x0': rect[0], 'x1': rect[2], 'y0': rect[1]})
+
+            if len(header_cells) < 2:
+                continue
+
+            # 중복 rect 제거 (border + fill 겹침 → 바깥쪽만 유지)
+            header_cells.sort(key=lambda c: (c['y0'], c['x0']))
+            deduped = []
+            for c in header_cells:
+                is_inner = any(
+                    abs(c['y0'] - d['y0']) < 5 and c['x0'] > d['x0'] + 1 and c['x1'] < d['x1'] - 1
+                    for d in deduped
+                )
+                if not is_inner:
+                    deduped.append(c)
+            header_cells = deduped
+
+            if len(header_cells) < 2:
+                continue
+
+            # y0 기준 행 그룹핑
+            row_groups = defaultdict(list)
+            for c in header_cells:
+                matched = False
+                for ry in list(row_groups.keys()):
+                    if abs(c['y0'] - ry) < 3:
+                        row_groups[ry].append(c)
+                        matched = True
+                        break
+                if not matched:
+                    row_groups[c['y0']].append(c)
+
+            # 각 헤더 행에서 열 너비 추출
+            page_spans_pi = [s for s in body_spans if s['page'] == pi]
+            for ry in sorted(row_groups.keys()):
+                row = sorted(row_groups[ry], key=lambda c: c['x0'])
+                if len(row) < 2:
+                    continue
+                total_w = row[-1]['x1'] - row[0]['x0']
+                if total_w < 50:
+                    continue
+                widths_pct = [round((c['x1'] - c['x0']) / total_w * 100, 1) for c in row]
+
+                # 각 셀 x 범위 내 텍스트로 헤더 매칭
+                header_texts = []
+                for cell in row:
+                    cell_spans = [s for s in page_spans_pi
+                                  if abs(s['y'] - ry) < 15
+                                  and s['x'] >= cell['x0'] - 5
+                                  and s['x'] <= cell['x1'] + 5]
+                    if cell_spans:
+                        header_texts.append(cell_spans[0]['text'].strip())
+                    else:
+                        header_texts.append('')
+
+                if all(header_texts) and len(header_texts) == len(widths_pct):
+                    key = '|'.join(header_texts)
+                    if key not in table_width_suggestions:
+                        table_width_suggestions[key] = widths_pct
+
+    # ================================================================
     # 페이지 마진 추출
     # ================================================================
     margin_lefts = []; margin_rights = []; margin_tops = []; margin_bottoms = []
@@ -432,6 +753,15 @@ def extract_from_pdf(pdf_path):
                       [doc[i].rect.height for i in range(len(margin_bottoms))])]
         mb = round(sorted(bottom_pts)[len(bottom_pts)//2] * 20)
         page_margin = {'top': mt, 'right': mr, 'bottom': mb, 'left': ml}
+
+    # 불릿 들여쓰기 계산 (page_margin 확정 후)
+    if bullet_indents:
+        med_x = sorted(bullet_indents)[len(bullet_indents) // 2]
+        left_margin_pt = (page_margin['left'] / 20) if page_margin else 35
+        indent_pt = med_x - left_margin_pt
+        if indent_pt > 5:
+            indent_dxa = round(indent_pt * 20)
+            list_indent_info = {'left': indent_dxa, 'hanging': round(indent_dxa / 2)}
 
     # ================================================================
     # 프로파일 조립
@@ -498,13 +828,43 @@ def extract_from_pdf(pdf_path):
         'orientation': 'portrait' if page_height > page_width else 'landscape',
     }
 
+    # spacing
+    if spacing_info:
+        profile['spacing'] = spacing_info
+
+    # projectInfoBold
+    if project_info_bold is not None:
+        profile['cover']['projectInfoBold'] = project_info_bold
+
+    # 표지 간격
+    if cover_spacing:
+        for k, v in cover_spacing.items():
+            profile['cover'][k] = v
+
     # pageMargin
     if page_margin:
         profile['pageMargin'] = page_margin
 
+    # cellMargins
+    if cell_margins_info:
+        profile['cellMargins'] = cell_margins_info
+
+    # tableBorder
+    if table_border_info:
+        profile['tableBorder'] = table_border_info
+
+    # listIndent
+    if list_indent_info:
+        profile['listIndent'] = list_indent_info
+
+    # tocIndent
+    if toc_indent_info:
+        profile['tocIndent'] = toc_indent_info
+
     # sizes (None 제거)
     size_entries = {
         'title': to_halfpt(size_map.get('title')),
+        'subtitle': to_halfpt(subtitle_size),
         'h2': to_halfpt(size_map.get('h2')),
         'h3': to_halfpt(size_map.get('h3')),
         'body': to_halfpt(body_size),
@@ -528,6 +888,110 @@ def extract_from_pdf(pdf_path):
     # changeHistory
     if change_history:
         profile['changeHistory'] = change_history
+
+    # _suggestions (Level 2: 제안용, 자동 머지 대상 아님)
+    suggestions = {}
+    if table_width_suggestions:
+        suggestions['tableWidths'] = table_width_suggestions
+
+    # C1. 인라인 bold 위치 제안
+    inline_bolds = []
+    for s in body_spans:
+        if not s['bold']:
+            continue
+        sz = s['size']
+        # 본문 크기의 bold만 (헤딩/표지 bold 제외)
+        if abs(sz - body_size) > 0.5:
+            continue
+        # 짧은 텍스트는 노이즈일 수 있으므로 2자 이상
+        if len(s['text']) < 2:
+            continue
+        inline_bolds.append({
+            'page': s['page'] + 1,
+            'text': s['text'][:50],
+        })
+    if inline_bolds:
+        # 중복 제거 (같은 텍스트는 1회만)
+        seen = set()
+        deduped_bolds = []
+        for b in inline_bolds:
+            if b['text'] not in seen:
+                seen.add(b['text'])
+                deduped_bolds.append(b)
+        suggestions['inlineBold'] = deduped_bolds
+
+    # C2. 페이지 나누기 위치 제안
+    page_breaks_suggestion = []
+    for pi in range(page_count - 1):
+        # 각 페이지의 마지막 요소와 다음 페이지 첫 요소
+        page_spans_curr = [s for s in body_spans if s['page'] == pi]
+        page_spans_next = [s for s in body_spans if s['page'] == pi + 1]
+        last_elem = max(page_spans_curr, key=lambda s: s['y'])['text'][:40] if page_spans_curr else ''
+        first_elem = min(page_spans_next, key=lambda s: s['y'])['text'][:40] if page_spans_next else ''
+        if last_elem and first_elem:
+            page_breaks_suggestion.append({
+                'afterPage': pi + 1,
+                'lastElement': last_elem,
+                'nextElement': first_elem,
+            })
+    if page_breaks_suggestion:
+        suggestions['pageBreaks'] = page_breaks_suggestion
+
+    # C3. 목차 구조 제안
+    if toc_info:
+        toc_suggestion = {}
+        # 목차 페이지에서 항목 추출
+        for pi in range(min(5, page_count)):
+            page_spans_pi = [s for s in body_spans if s['page'] == pi]
+            page_text = ' '.join(s['text'] for s in page_spans_pi)
+            if '목차' not in page_text or ('...' not in page_text and '…' not in page_text):
+                continue
+            # 목차 항목: dot leader가 있는 줄
+            toc_items = []
+            for s in page_spans_pi:
+                if re.search(r'\.{3,}|…', s['text']):
+                    # "1. 개요 ........... 3" 형태에서 제목 추출
+                    clean = re.sub(r'\s*\.{3,}\s*\d*\s*$', '', s['text']).strip()
+                    clean = re.sub(r'\s*…\s*\d*\s*$', '', clean).strip()
+                    if clean and clean != '목차':
+                        toc_items.append(clean)
+            if toc_items:
+                toc_suggestion['items'] = toc_items
+
+            # 위치 추정: 목차가 변경이력 뒤에 있으면 afterChangeHistory
+            if pi >= 2:
+                toc_suggestion['position'] = 'afterChangeHistory'
+            else:
+                toc_suggestion['position'] = 'afterCover'
+            break
+
+        # 목차에 없는 본문 제목 → 제외 후보
+        if toc_suggestion.get('items'):
+            toc_item_set = set(toc_suggestion['items'])
+            h2_h3_titles = []
+            for s in body_spans:
+                sz = s['size']
+                if size_map.get('h2') and abs(sz - size_map['h2']) < 0.5:
+                    h2_h3_titles.append(s['text'].strip())
+                elif size_map.get('h3') and abs(sz - size_map['h3']) < 0.5:
+                    h2_h3_titles.append(s['text'].strip())
+            exclude_candidates = []
+            seen_titles = set()
+            for t in h2_h3_titles:
+                if t not in seen_titles and t not in toc_item_set:
+                    # 목차 아이템과 부분 매칭도 체크
+                    partial_match = any(t in item or item in t for item in toc_item_set)
+                    if not partial_match:
+                        exclude_candidates.append(t)
+                seen_titles.add(t)
+            if exclude_candidates:
+                toc_suggestion['exclude'] = exclude_candidates
+
+        if toc_suggestion:
+            suggestions['toc'] = toc_suggestion
+
+    if suggestions:
+        profile['_suggestions'] = suggestions
 
     # _analysis (리포트용)
     profile['_analysis'] = {

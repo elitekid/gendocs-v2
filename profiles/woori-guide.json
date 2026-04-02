@@ -73,19 +73,67 @@
       "date",
       "version"
     ],
-    "versionSize": 18
+    "versionSize": 18,
+    "titleSpacingBefore": 1540,
+    "infoSpacingBefore": 5420
   },
   "orientation": "portrait",
-  "pageMargin": { "top": 574, "right": 700, "bottom": 993, "left": 679 },
+  "pageMargin": {
+    "top": 574,
+    "right": 700,
+    "bottom": 993,
+    "left": 679
+  },
   "toc": {
     "enabled": true,
     "title": "목차",
     "titleColor": "365F91",
     "hasPageNumbers": true,
     "position": "afterChangeHistory",
-    "exclude": ["1.1 용어 정의", "5.4 암호화 예제 (Java)", "5.5 복호화 예제 (Java)"]
+    "exclude": [
+      "1.1 용어 정의",
+      "5.4 암호화 예제 (Java)",
+      "5.5 복호화 예제 (Java)"
+    ]
   },
   "changeHistory": {
     "totalRows": 20
+  },
+  "spacing": {
+    "h2": {
+      "after": 920
+    },
+    "h3": {
+      "before": 920,
+      "after": 560
+    },
+    "body": {
+      "after": 440
+    }
+  },
+  "_suggestions": {
+    "tableWidths": {
+      "날짜|버전|작성자|비고": [
+        11.7,
+        7.9,
+        7.9,
+        66.6
+      ],
+      "1.1 용어 정의|설명": [
+        21.2,
+        78.7
+      ],
+      "2.2 필수 헤더 정보|설명|예시": [
+        22.7,
+        44.4,
+        32.7
+      ],
+      "구성 요소|설명|필수 여부|예시": [
+        18.7,
+        31.1,
+        24.9,
+        24.9
+      ]
+    }
   }
 }

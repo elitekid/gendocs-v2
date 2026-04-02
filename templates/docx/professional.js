@@ -103,15 +103,23 @@ function createTemplate(theme = {}) {
   const _listRendering = _COLORS.listRendering || 'bullet';
 
   // Derived values
-  const _border = { style: BorderStyle.SINGLE, size: 1, color: _COLORS.border };
+  // 테이블 테두리: 스타일/굵기 슬롯
+  const _tableBorder = theme.tableBorder || {};
+  const _borderStyle = _tableBorder.style === 'none' ? BorderStyle.NONE
+    : _tableBorder.style === 'double' ? BorderStyle.DOUBLE
+    : BorderStyle.SINGLE;
+  const _borderSize = _tableBorder.size || 1;
+  const _border = { style: _borderStyle, size: _borderSize, color: _COLORS.border };
   const _borders = { top: _border, bottom: _border, left: _border, right: _border };
   const _codeBorder = { style: BorderStyle.SINGLE, size: 1, color: _COLORS.codeBorder };
   const _headerShading = { fill: _tableHeaderBg, type: ShadingType.CLEAR };
   const _altShading = { fill: _COLORS.altRow, type: ShadingType.CLEAR };
   const _codeShading = { fill: _COLORS.codeBlock, type: ShadingType.CLEAR };
-  const _cellMargins = _isPortrait
+  // 셀 패딩: 슬롯 (theme.cellMargins 우선)
+  const _defaultCellMargins = _isPortrait
     ? { top: 60, bottom: 60, left: 80, right: 80 }
     : { top: 80, bottom: 80, left: 120, right: 120 };
+  const _cellMargins = theme.cellMargins || _defaultCellMargins;
 
   // 테이블 글꼴 크기: 독립 슬롯 (null → 기존 자동 계산 fallback)
   const _tableBodySize = _SIZES.tableBody || (_isPortrait ? Math.max(_SIZES.small - 2, 14) : _SIZES.small);
@@ -135,11 +143,16 @@ function createTemplate(theme = {}) {
     ]
   };
 
+  // 불릿/번호 목록 들여쓰기 슬롯
+  const _listIndent = theme.listIndent || {};
+  const _bulletLeft = _listIndent.left || 720;
+  const _bulletHanging = _listIndent.hanging || 360;
+
   const _numbering = {
     config: [{
       reference: "bullets",
       levels: [{ level: 0, format: LevelFormat.BULLET, text: _bulletChar, alignment: AlignmentType.LEFT,
-        style: { paragraph: { indent: { left: 720, hanging: 360 } } } }]
+        style: { paragraph: { indent: { left: _bulletLeft, hanging: _bulletHanging } } } }]
     }]
   };
 
@@ -252,7 +265,7 @@ function createTemplate(theme = {}) {
       ...parseInlineFormatting(content, _SIZES.body, textColor)
     ];
     return new Paragraph({
-      indent: { left: 720, hanging: 360 },
+      indent: { left: _bulletLeft, hanging: _bulletHanging },
       spacing: options.spacing || { before: 60, after: 60 },
       children
     });
@@ -697,7 +710,8 @@ function createTemplate(theme = {}) {
     if (_cover.style === 'centered') {
       // 원본 PDF 스타일: 로고 상단 → 제목 2줄 중앙 → 날짜+버전 하단
       _pushLogo(1200, 600);
-      elements.push(new Paragraph({ spacing: { before: 2400 }, children: [] }));
+      const _titleSpacingBefore = _cover.titleSpacingBefore || 2400;
+      elements.push(new Paragraph({ spacing: { before: _titleSpacingBefore }, children: [] }));
       // title에 \n이 있으면 줄바꿈 분리
       const _isTitleBold = _cover.titleBold !== false;
       const titleLines = title.split('\n');
@@ -718,7 +732,8 @@ function createTemplate(theme = {}) {
         }));
       }
       // 하단 날짜/버전 (projectInfo) — 순서 + 크기 제어
-      elements.push(new Paragraph({ spacing: { before: 3000 }, children: [] }));
+      const _infoSpacingBefore = _cover.infoSpacingBefore || 3000;
+      elements.push(new Paragraph({ spacing: { before: _infoSpacingBefore }, children: [] }));
       let orderedInfo = projectInfo;
       if (_cover.projectInfoOrder && Array.isArray(_cover.projectInfoOrder)) {
         const keyMap = {};
@@ -932,7 +947,8 @@ function createTemplate(theme = {}) {
     }));
 
     for (const h of headings) {
-      const indent = h.level === 3 ? 720 : 0;
+      const _tocIndent = theme.tocIndent || 720;
+      const indent = h.level === 3 ? _tocIndent : 0;
       const text = h.text;
       const pageNum = h.pageNum || '';
       const dotCount = Math.max(3, 60 - text.length - String(pageNum).length);
