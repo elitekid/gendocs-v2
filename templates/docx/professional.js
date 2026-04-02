@@ -9,7 +9,7 @@ const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   HeadingLevel, BorderStyle, WidthType, ShadingType, AlignmentType,
   LevelFormat, PageBreak, ImageRun, Header, Footer, PageNumber, TabStopType, TabStopPosition,
-  TableOfContents
+  TableOfContents // 현재 미사용, 정적 TOC로 전환 예정
 } = require('docx');
 const fs = require('fs');
 const path = require('path');
@@ -779,7 +779,6 @@ function createTemplate(theme = {}) {
     }
 
     return new Document({
-      features: { updateFields: true },
       styles: _docStyles,
       numbering: _numbering,
       sections: [sectionProps]
