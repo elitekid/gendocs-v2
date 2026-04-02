@@ -1,5 +1,5 @@
 {
-  "_generator": "extract-style-profile.py",
+  "_generator": "extract-style-profile.py v2",
   "_source": "C:/Users/USER/Desktop/유스가랴/개발/우리은행/큐뱅 HMAC 인증 및 암복호화 가이드_v1.3.pdf",
   "_unit": "sizes are in half-point (docx convention, 1pt = 2)",
   "_pageCount": 14,
@@ -11,11 +11,20 @@
     "h2Color": "000000",
     "h3Color": "434343",
     "h4Color": "000000",
+    "h1Bold": true,
+    "h2Bold": false,
+    "h3Bold": false,
+    "h4Bold": true,
     "tableHeaderBg": "D8D9D8",
     "tableHeaderText": "000000",
-    "altRow": "F1F2F1",
+    "tableHeaderBold": false,
+    "tableHeaderAlign": "center",
+    "altRow": "FFFFFF",
+    "border": "000000",
     "headerFont": "D9D9D9",
-    "footerFont": "CCCCCC"
+    "footerFont": "CCCCCC",
+    "bulletChar": "-",
+    "listRendering": "bullet"
   },
   "fonts": {
     "default": "Malgun Gothic",
@@ -29,7 +38,7 @@
     "h3": 28,
     "body": 22,
     "small": 18,
-    "code": 14,
+    "code": 18,
     "headerFooter": 22,
     "tableBody": 22,
     "tableHeader": 22
@@ -38,7 +47,8 @@
     "mode": "light",
     "lightBg": "FFFFFF",
     "lightBorder": "000000",
-    "borderWidth": 1
+    "borderWidth": 1,
+    "syntaxHighlight": false
   },
   "syntax": {
     "keyword": "000000",
@@ -55,8 +65,23 @@
   },
   "cover": {
     "style": "centered",
-    "logoWidth": 317,
-    "logoHeight": 73
+    "logoWidth": 250,
+    "logoHeight": 58,
+    "titleBold": false,
+    "projectInfoOrder": [
+      "date",
+      "version"
+    ],
+    "versionSize": 18
   },
-  "orientation": "portrait"
+  "orientation": "portrait",
+  "toc": {
+    "enabled": true,
+    "title": "목차",
+    "titleColor": "365F91",
+    "hasPageNumbers": true
+  },
+  "changeHistory": {
+    "totalRows": 20
+  }
 }

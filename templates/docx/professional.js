@@ -88,11 +88,19 @@ function createTemplate(theme = {}) {
   const _tableHeaderBold = _COLORS.tableHeaderBold !== false; // null/undefined → true
   const _tableHeaderAlign = _COLORS.tableHeaderAlign || null; // null → 기존 (left)
 
-  // 헤딩 색상: 레벨별 독립 슬롯 (null → 기존 색상 fallback)
+  // 헤딩 색상 + bold: 레벨별 독립 슬롯
   const _h1Color = _COLORS.h1Color || _COLORS.primary;
   const _h2Color = _COLORS.h2Color || _COLORS.secondary;
   const _h3Color = _COLORS.h3Color || _COLORS.textDark;
   const _h4Color = _COLORS.h4Color || _COLORS.text;
+  const _h1Bold = _COLORS.h1Bold !== false;
+  const _h2Bold = _COLORS.h2Bold !== false;
+  const _h3Bold = _COLORS.h3Bold !== false;
+  const _h4Bold = _COLORS.h4Bold !== false;
+
+  // 불릿 문자 + 목록 렌더링 방식
+  const _bulletChar = _COLORS.bulletChar || "\u2022";
+  const _listRendering = _COLORS.listRendering || 'bullet';
 
   // Derived values
   const _border = { style: BorderStyle.SINGLE, size: 1, color: _COLORS.border };
@@ -113,16 +121,16 @@ function createTemplate(theme = {}) {
     default: { document: { run: { font: _FONTS.default, size: _SIZES.body } } },
     paragraphStyles: [
       { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: _SIZES.h1, bold: true, font: _FONTS.default, color: _h1Color },
+        run: { size: _SIZES.h1, bold: _h1Bold, font: _FONTS.default, color: _h1Color },
         paragraph: { spacing: _spacing.h1, outlineLevel: 0 } },
       { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: _SIZES.h2, bold: true, font: _FONTS.default, color: _h2Color },
+        run: { size: _SIZES.h2, bold: _h2Bold, font: _FONTS.default, color: _h2Color },
         paragraph: { spacing: _spacing.h2, outlineLevel: 1 } },
       { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: _SIZES.h3, bold: true, font: _FONTS.default, color: _h3Color },
+        run: { size: _SIZES.h3, bold: _h3Bold, font: _FONTS.default, color: _h3Color },
         paragraph: { spacing: _spacing.h3, outlineLevel: 2 } },
       { id: "Heading4", name: "Heading 4", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: _SIZES.h4 || _SIZES.body, bold: true, font: _FONTS.default, color: _h4Color },
+        run: { size: _SIZES.h4 || _SIZES.body, bold: _h4Bold, font: _FONTS.default, color: _h4Color },
         paragraph: { spacing: _spacing.h4, outlineLevel: 3 } }
     ]
   };
@@ -130,7 +138,7 @@ function createTemplate(theme = {}) {
   const _numbering = {
     config: [{
       reference: "bullets",
-      levels: [{ level: 0, format: LevelFormat.BULLET, text: "\u2022", alignment: AlignmentType.LEFT,
+      levels: [{ level: 0, format: LevelFormat.BULLET, text: _bulletChar, alignment: AlignmentType.LEFT,
         style: { paragraph: { indent: { left: 720, hanging: 360 } } } }]
     }]
   };
@@ -227,6 +235,9 @@ function createTemplate(theme = {}) {
   function bullet(content, options = {}) {
     const bulletColor = _COLORS.bulletText || _COLORS.text;
     const children = parseInlineFormatting(content, _SIZES.body, bulletColor);
+    if (_listRendering === 'paragraph') {
+      return new Paragraph({ spacing: options.spacing || {}, children });
+    }
     return new Paragraph({
       numbering: { reference: "bullets", level: 0 }, spacing: options.spacing || {},
       children
@@ -693,12 +704,27 @@ function createTemplate(theme = {}) {
           children: [new TextRun({ text: subtitle, bold: true, size: _titleSize, font: _FONTS.default, color: _COLORS.text })]
         }));
       }
-      // 하단 날짜/버전 (projectInfo)
+      // 하단 날짜/버전 (projectInfo) — 순서 + 크기 제어
       elements.push(new Paragraph({ spacing: { before: 3000 }, children: [] }));
-      for (const row of projectInfo) {
+      let orderedInfo = projectInfo;
+      if (_cover.projectInfoOrder && Array.isArray(_cover.projectInfoOrder)) {
+        const keyMap = {};
+        for (const row of projectInfo) {
+          const lbl = (row.label || '').toLowerCase();
+          if (lbl.includes('버전') || lbl.includes('version')) keyMap['version'] = row;
+          else if (lbl.includes('수정') || lbl.includes('날짜') || lbl.includes('date')) keyMap['date'] = row;
+        }
+        orderedInfo = _cover.projectInfoOrder.map(k => keyMap[k]).filter(Boolean);
+        if (orderedInfo.length === 0) orderedInfo = projectInfo;
+      }
+      for (let idx = 0; idx < orderedInfo.length; idx++) {
+        const row = orderedInfo[idx];
+        const lbl = (row.label || '').toLowerCase();
+        const isVersion = lbl.includes('버전') || lbl.includes('version');
+        const sz = isVersion && _cover.versionSize ? _cover.versionSize : _SIZES.body;
         elements.push(new Paragraph({
           alignment: AlignmentType.CENTER, spacing: { after: 100 },
-          children: [new TextRun({ text: row.value, bold: true, font: _FONTS.default, size: _SIZES.body, color: _COLORS.text })]
+          children: [new TextRun({ text: row.value, bold: true, font: _FONTS.default, size: sz, color: _COLORS.text })]
         }));
       }
       elements.push(new Paragraph({ children: [new PageBreak()] }));
@@ -881,11 +907,40 @@ function createTemplate(theme = {}) {
   // Return public API
   // ============================================================
 
+  function createTocPage(headings, tocStyle = {}) {
+    const title = tocStyle.title || '목차';
+    const titleColor = tocStyle.titleColor || _COLORS.primary;
+    const elements = [];
+
+    elements.push(new Paragraph({
+      spacing: { before: 200, after: 400 },
+      children: [new TextRun({ text: title, bold: true, size: _SIZES.h2, font: _FONTS.default, color: titleColor })]
+    }));
+
+    for (const h of headings) {
+      const indent = h.level === 3 ? 720 : 0;
+      const text = h.text;
+      const pageNum = h.pageNum || '';
+      const dotCount = Math.max(3, 60 - text.length - String(pageNum).length);
+      const dots = '.'.repeat(dotCount);
+      const displayText = pageNum ? `${text} ${dots} ${pageNum}` : text;
+
+      elements.push(new Paragraph({
+        indent: { left: indent },
+        spacing: { before: 40, after: 40 },
+        children: [new TextRun({ text: displayText, font: _FONTS.default, size: _SIZES.body, color: _COLORS.text })]
+      }));
+    }
+
+    elements.push(new Paragraph({ children: [new PageBreak()] }));
+    return elements;
+  }
+
   return {
     h1, h2, h3, h4, text, bullet, numberedItem, note, labelText, infoBox, warningBox, flowBox, pageBreak, spacer,
     createCodeBlock, createFlowBlock, createJsonBlock, createSyntaxCodeBlock, createImage,
     createSimpleTable, createTable,
-    createCoverPage,
+    createCoverPage, createTocPage,
     createDocument, saveDocument
   };
 }
