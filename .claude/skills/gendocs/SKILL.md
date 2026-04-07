@@ -51,7 +51,7 @@ AskUserQuestion으로 물어보세요:
 1. 사용자에게 파일 경로를 물어보세요.
 2. 파일 포맷에 따라 내용을 추출하세요:
    - `.docx` → `python -X utf8 tools/extract-docx.py <파일> --json [--extract-images <dir>]` 실행 (ZIP+XML 방식, 의존성 없음). 제목/테이블/코드블록/인포박스/이미지를 구조화된 JSON으로 추출합니다. 이미지가 있으면 `--extract-images`로 함께 추출합니다.
-   - `.pdf` → Read 도구로 내용 추출. 아래 **PDF 구조화 규칙**을 반드시 따르세요.
+   - `.pdf` → 아래 **PDF 자동 파싱** 절차를 따르세요. (수동 Read 불필요)
    - `.txt` / `.csv` / `.json` / `.yaml` → Read 도구로 텍스트 직접 읽기.
    - `.xlsx` → Read 도구로 읽기 (시트 내용 추출).
    - `.hwp` → 읽기 불가 시 사용자에게 텍스트로 붙여넣기를 안내하세요.
@@ -64,25 +64,37 @@ AskUserQuestion으로 물어보세요:
 6. **원본 소스 카운트를 기록**하세요 (섹션 수, 테이블 수, 코드블록 수, 이미지 수 등). 5단계 콘텐츠 검증에서 사용합니다.
 7. 3단계로 진행.
 
-#### PDF 구조화 규칙
+#### PDF 자동 파싱
 
-PDF는 DOCX와 달리 heading level, 테이블 구조 등의 메타데이터가 없으므로 내용을 추론하여 구조화합니다. **converter가 지원하는 요소만** 사용하세요:
+PDF는 `extract-pdf-ir.py`로 자동 파싱합니다. 2단계 파이프라인:
 
-**지원 요소**: H2, H3, H4, 불릿(`-`), 테이블, 코드블록, 인포박스(`> 참고:`), 경고박스(`> 주의:`), 이미지, 본문 텍스트
+**Step 1: 메타데이터 추출 + 구조 분류**
+```bash
+python -X utf8 tools/extract-pdf-ir.py <파일.pdf> --meta-only
+```
+출력된 JSON을 읽고, 직접 판단하세요:
+- `fontDistribution`: 가장 많은 문자 수 = 본문. 그보다 큰 크기들을 H2~H5에 매핑
+- `firstPages`: 0페이지가 표지인지, 1페이지가 목차인지 판단
+- 결과를 `{ "levelMap": {"22": 2, "18": 3}, "coverPages": [0], "tocPages": [1] }` 형태로 결정
 
-**금지**: 중첩 불릿 리스트 (converter가 들여쓰기를 무시하므로 구조가 손실됨)
+**Step 2: 분류 결과로 변환**
+```bash
+python -X utf8 tools/extract-pdf-ir.py <파일.pdf> --json --classify "<JSON>"
+```
+이 출력이 SemanticIR이며, 이후 MD 생성 없이 바로 doc-config → `node lib/convert.js`로 변환 가능.
 
-**구조 변환 원칙**:
-- 중첩 리스트(3단계 이상, 다차원 구조) → **테이블**로 변환
-- 단순 키-값 1~3개 → `- **키** — 값` 형식의 불릿 사용 (소규모 2컬럼 테이블 남용 금지)
-- 코드, 명령어, 설정 값은 코드블록(` ``` `)으로 감싸기
-- 주의/참고 사항은 인용문(`> 주의:`, `> 참고:`)으로 표현
+**classify 없이 직접 변환도 가능** (휴리스틱 fallback):
+```bash
+node lib/convert.js doc-configs/문서.json
+```
+단, 섹션 번호가 없는 PDF에서는 heading 레벨이 부정확할 수 있으므로 Step 1~2 권장.
 
-**heading level 판단**:
-- PDF에서 가장 큰 제목 → H2 (H1은 문서 제목 1개만)
-- 그 아래 소제목 → H3
-- 그 아래 세부 항목 → H4
-- 볼드 텍스트가 독립 줄에 있으면 heading 후보
+**규칙 기반으로 정확한 것** (분류 불필요):
+- 섹션 번호 (`4.1.2` 등) → 번호 깊이로 heading 레벨 자동 결정
+- `flags & 8` → 모노스페이스(코드블록) 자동 감지
+- 중괄호 추적 → JSON 코드블록 자동 감지
+- 불릿 패턴 (`-`, `•` 등) → listItem 자동 감지
+- 동일 헤더 테이블 → cross-page 자동 병합
 
 ### B. 텍스트 붙여넣기
 
@@ -331,12 +343,12 @@ AskUserQuestion으로 물어보세요:
 |------|------|--------|--------|
 | ① MD 셀프리뷰 | 변환 전 | MD 구조 + 표현 적절성 | lint-md.py 자동 검사 → AI 읽기 리뷰 → 수정 |
 | ② AI 셀프리뷰 | 변환 후 | 콘텐츠 정합성 + 품질 | review-docx.py 자동 분석 + AI 판단 |
-| ③ 레이아웃 루프 | 변환 후 | 페이지 배치 | WARN 기반 doc-config 수정 반복 (최대 4회) |
-| ④ 경험 기억 | 세션 간 | 교정 경험 재활용 | reflections.json 조회 → doc-config 사전 설정 |
+| ③ 레이아웃 루프 | 변환 후 | 페이지 배치 | `--pipeline`이 자동 실행 (fix-rules + 재변환, 최대 4회) |
+| ④ 경험 기억 | 세션 간 | 교정 경험 재활용 | reflections.json 자동 기록 (pipeline이 reflections-writer 호출) |
 
 - 계층 ①: 2단계 후 **필수 게이트** → [셀프리뷰](#셀프리뷰-필수-게이트--생략-금지)
 - 계층 ②: 5단계 변환 후 실행 → [5-4. AI 셀프리뷰](#5-4-계층--ai-셀프리뷰-콘텐츠--품질)
-- 계층 ③: 6단계에서 실행 → [6단계. 레이아웃 자가개선 루프](#6단계-계층--레이아웃-자가개선-루프-최대-4회-조기-종료-포함)
+- 계층 ③④: `--pipeline` 플래그가 자동 처리 → [6단계](#6단계-자가개선-루프-pipelinejs-자동-처리)
 
 ---
 
@@ -386,17 +398,19 @@ doc-config JSON에 포함할 내용:
 
 > `_meta.createdBy`: `/gendocs` 스킬로 생성 시 `"ai"`, 사용자가 수작업으로 작성 시 `"human"`. 패턴 붕괴 방지를 위한 출처 추적에 사용.
 
-### 5-2. 실행
+### 5-2. 실행 (자가개선 파이프라인)
+
 ```bash
-node lib/convert.js doc-configs/{파일명}.json
+node lib/convert.js doc-configs/{파일명}.json --pipeline
 ```
 
-### 5-3. 레이아웃 검증 (JSON 리포트)
-```bash
-python -X utf8 tools/validate-docx.py output/{파일명}.docx --json
-```
+`--pipeline`은 변환→검증→자동수정을 최대 4회 반복합니다.
+- WARN 0 → PASS (즉시 완료)
+- suggestion 있는 WARN → doc-config 자동 수정 → 재변환
+- suggestion 없는 WARN → NEEDS_MANUAL (수동 수정 필요)
+- 조기 종료: STOP_PLATEAU (WARN 수 정체), STOP_OSCILLATION (WARN 수 진동)
 
-또는 한 번에 실행+검증:
+파이프라인 없이 단순 변환만 하려면:
 ```bash
 node lib/convert.js doc-configs/{파일명}.json --validate
 ```
@@ -450,147 +464,38 @@ node tools/score-docx.js doc-configs/{파일명}.json --skip-convert
 
 ---
 
-## 6단계: 계층 ③ — 레이아웃 자가개선 루프 (최대 4회, 조기 종료 포함)
+## 6단계: 자가개선 루프 (pipeline.js 자동 처리)
 
-검증 결과에 따라 판정하세요:
+5-2에서 `--pipeline`을 사용했으면 자가개선 루프가 이미 실행됨. 결과를 해석하세요.
 
-| 판정 | 조건 | 행동 |
-|------|------|------|
-| **PASS** | WARN 0건 | 루프 종료, 완료 안내 |
-| **FIX** | WARN 있음 + 개선 중 | doc-config 수정 → 재실행 → 재검증 |
-| **SKIP** | INFO만 있음 | 루프 종료 (INFO는 참고용) |
-| **ROLLBACK** | 수정 후 페이지 수 10%↑ | 수정 취소, 사용자 확인 |
-| **STOP_PLATEAU** | WARN 수 변화 없음 (2회 연속 동일) | 루프 종료, 현재 결과 사용 |
-| **STOP_OSCILLATION** | WARN 수 증감 반복 (3회 방향 전환) | 루프 종료, 최적 반복 결과 사용 |
-| **STOP_MAX** | 4회 도달 | 루프 종료, 최적 반복 결과 사용 |
+### pipeline 결과 해석
 
-### 개선 델타 추적
+| status | 의미 | 행동 |
+|--------|------|------|
+| **PASS** | WARN 0건 | 완료 |
+| **FIX** | 자동 수정 후 WARN 해소 | 수정 내용 보고 후 완료 |
+| **NEEDS_MANUAL** | 자동 수정 불가 WARN 남음 | Claude Code가 doc-config/source MD 수동 수정 후 재실행 |
+| **STOP_PLATEAU** | WARN 수 2회 동일 | 현재 결과 사용, 사용자에게 보고 |
+| **STOP_OSCILLATION** | WARN 수 진동 | 현재 결과 사용, 사용자에게 보고 |
+| **ROLLBACK** | 페이지 수 10%↑ | 이전 결과 복원 |
 
-루프 시작 시 추적 상태를 초기화하세요:
+### NEEDS_MANUAL 시 수동 개입
 
-- `warnHistory`: 각 반복의 WARN 수 배열 (예: `[3, 1, 1]`)
-- `bestIteration`: 최소 WARN을 기록한 반복 번호
-- `bestWarnCount`: 최소 WARN 수
-- `bestDocConfig`: 최소 WARN 시점의 doc-config 상태 (변경 사항)
+pipeline이 NEEDS_MANUAL로 중단되면:
+1. 남은 WARN 목록을 분석
+2. doc-config (`pageBreaks`, `tableWidths`) 또는 source MD를 수정
+3. 재실행: `node lib/convert.js doc-configs/{파일명}.json --pipeline`
 
-**매 반복마다**:
-1. 검증 결과에서 WARN 수를 `warnHistory`에 추가
-2. 현재 WARN 수가 `bestWarnCount`보다 작으면 `bestIteration`, `bestWarnCount`, `bestDocConfig` 갱신
-3. 조기 종료 판정:
-   - **STOP_PLATEAU**: `warnHistory` 마지막 2개 값이 동일 → 진전 없음
-   - **STOP_OSCILLATION**: `warnHistory`에서 3회 연속 방향 전환 (↑↓↑ 또는 ↓↑↓) → 진동
-4. 조기 종료가 아니면 FIX 진행
-
-### 조기 종료 시 최적 결과 복원
-
-STOP_PLATEAU, STOP_OSCILLATION, STOP_MAX 판정 시:
-
-1. 현재 반복이 `bestIteration`과 같으면 → 현재 결과 그대로 사용
-2. 현재 반복이 `bestIteration`보다 나쁘면 → `bestDocConfig`로 복원 후 1회 재변환
-3. 사용자에게 보고:
-   ```
-   조기 종료: {판정} (반복 {N}회)
-   최적 결과: 반복 {bestIteration} (WARN {bestWarnCount}건)
-   WARN 추이: {warnHistory} → 개선 정체/진동 감지
-   ```
-4. Reflexion 기록: `outcome`을 해당 판정으로 기록 (STOP_PLATEAU 등)
-
-### FIX 시 수정 대상
-- **WARN만 자동 수정** (이미지 배치 등 명확한 문제)
-- **INFO는 수정하지 않음** (고아 제목 등은 시뮬레이션 추정치이므로 실제 Word 렌더링과 다를 수 있음)
-- 수정: doc-config JSON의 `pageBreaks`, `tableWidths` 등을 조정
-- 일괄 패턴 매칭으로 break를 넣지 말 것 (특정 위치만 수정)
-
-### FIX: NARROW_IMAGE / FLAT_IMAGE (다이어그램 비율 이상)
-
-review-docx.py가 `NARROW_IMAGE` 또는 `FLAT_IMAGE` WARN을 보고하면 해당 다이어그램의 **source MD 코드블록을 수정**하세요:
-
-**권장 해결법: Graphviz DOT `rankdir=TB` + `rank=same` 다행 그리드**
-
-선형 프로세스 흐름(8개+ 노드 체인)은 **Mermaid가 아닌 Graphviz DOT으로 전환**하세요. Mermaid의 `subgraph direction` 키워드는 렌더링에 반영되지 않는 경우가 많아 비율 제어가 불안정합니다.
-
-```dot
-digraph process {
-    rankdir=TB
-    node [shape=box, style="rounded,filled", fillcolor="#E8F0F7", fontname="Malgun Gothic", fontsize=10, margin="0.3,0.15", penwidth=1.8]
-    edge [fontname="Malgun Gothic", fontsize=9, penwidth=1.2]
-
-    {rank=same; A; B; C}       /* 행 1 */
-    {rank=same; D; E; F}       /* 행 2 */
-    {rank=same; G; H; I}       /* 행 3 */
-
-    A -> B -> C
-    C -> D                     /* 행 간 연결 */
-    D -> E -> F
-    F -> G
-    G -> H -> I
-}
-```
-
-**행 분배 기준**: 노드 9개 → 3행×3열, 노드 12개 → 3행×4열, 분기 있으면 분기점 기준으로 행 분리
-
-| 이슈 | 원인 | 수정 방법 |
-|------|------|----------|
-| NARROW_IMAGE | Mermaid `flowchart TD` / `stateDiagram` 직선 체인 | **Graphviz DOT으로 전환** + `rank=same`으로 다행 배치 |
-| NARROW_IMAGE | Graphviz `rankdir=TB` 직선 | `rank=same`으로 노드를 3~5개씩 같은 행에 배치 |
-| FLAT_IMAGE | Mermaid `flowchart LR` / `direction LR` 직선 체인 | **Graphviz DOT으로 전환** + `rankdir=TB` + `rank=same` 3행 |
-| FLAT_IMAGE | Graphviz `rankdir=LR` 노드 과다 | `rankdir=TB`로 변경 + `rank=same`으로 행 분리 |
-
-> **핵심**: Mermaid `subgraph direction TB/LR`은 렌더링에 반영 안 되는 경우가 빈번. 선형 체인(8개+ 노드)은 **Graphviz DOT `rankdir=TB` + `rank=same`**이 유일하게 신뢰 가능한 비율 제어 수단.
->
-> **색상 활용**: `shape=diamond`(분기점), `fillcolor="#FFD6D6"`(거부/실패), `fillcolor="#D6FFD6"`(성공) 등으로 시각 구분 추가.
-
-> 다이어그램 방향 변경은 source MD 수정 → 재변환이 필요합니다 (doc-config만으로는 해결 불가).
-
-### FIX 성공 후 경험 기록 (Reflexion)
-
-FIX가 성공하면 (WARN이 해결되면) `lib/reflections.json`에 기록하세요:
-
-1. `lib/reflections.json`을 읽기 (없으면 빈 구조 `{"_version":1,"reflections":[]}` 생성)
-2. 해결된 WARN마다 엔트리 생성:
-   - `id`: 기존 최대 ID + 1 (`ref-NNN`)
-   - `outcome`: "FIX"
-   - `issue`: 원래 WARN 정보
-   - `fix`: 실제 수행한 수정 (필드, 액션, 값)
-   - `reflection`: **핵심 교훈** 1~2문장 (왜 발생, 어떻게 방지)
-   - `tags`: issue type + config field + doc type
-3. 저장 (`_lastUpdated` 갱신)
-
-> 200개 초과 시 가장 오래된 PASS 엔트리부터 삭제. ROLLBACK은 보존.
-
-### ROLLBACK 판정
-- 수정 전 페이지 수를 기록
-- 수정 후 페이지 수가 10% 이상 증가하면 과도한 수정
-- 수정을 되돌리고 사용자에게 에스컬레이션
-
-### ROLLBACK 경험 기록 (Anti-pattern)
-
-ROLLBACK 발생 시 반드시 `lib/reflections.json`에 기록:
-- `outcome`: "ROLLBACK"
-- `reflection`: 왜 실패했는지, 어떤 수정이 과도했는지
-- `tags`에 `"anti-pattern"` 포함
-
-### 조기 종료 경험 기록
-
-STOP_PLATEAU/STOP_OSCILLATION/STOP_MAX로 종료된 경우에도 `lib/reflections.json`에 기록하세요:
-- `outcome`: "STOP_PLATEAU" / "STOP_OSCILLATION" / "STOP_MAX"
-- `context.warnHistory`: WARN 수 추이 배열
-- `reflection`: 왜 개선이 정체되었는지 분석 (어떤 WARN이 해결 불가능한지)
+> NARROW_IMAGE/FLAT_IMAGE WARN은 source MD의 다이어그램 코드블록 수정이 필요합니다 (doc-config만으로 해결 불가). 선형 체인(8개+ 노드)은 Graphviz DOT `rankdir=TB` + `rank=same`으로 전환하세요.
 
 ### 루프 종료 후 사용자 선택 (WARN이 남아있을 때)
 
-STOP_PLATEAU, STOP_OSCILLATION, STOP_MAX로 종료되었고 WARN이 남아있으면:
-- WARN 추이와 조기 종료 사유를 보고
-- AskUserQuestion으로 선택받기:
+STOP_PLATEAU/STOP_OSCILLATION으로 종료되었고 WARN이 남아있으면:
 
 | 선택지 | 설명 |
 |--------|------|
-| 이대로 완료 | 최적 반복 결과를 최종으로 확정 |
-| 직접 피드백 | 사용자가 추가 수정사항을 직접 지시 |
-
-"직접 피드백"을 선택한 경우:
-- 사용자의 피드백을 듣고 doc-config 또는 source MD를 수정
-- 5단계를 다시 진행 (warnHistory 초기화)
+| 이대로 완료 | 현재 결과를 최종 확정 |
+| 직접 피드백 | 사용자가 추가 수정사항 지시 → 5단계 재진행 |
 
 ---
 
@@ -612,14 +517,13 @@ node tools/score-docx.js doc-configs/{파일명}.json --skip-convert --save
 node tools/extract-patterns.js --audit    # 출처 분포 + 다양성 메트릭 리포트
 ```
 
-변환 성공(WARN 0)이고 FIX 없이 통과한 경우 `lib/reflections.json`에 기록:
-- `outcome`: "PASS", `iteration`: 0, `fix.action`: "none"
-- `reflection`: "이 doc-config 설정으로 WARN 0. 주요: [핵심 설정 요약]"
+> reflections.json 기록은 `--pipeline`이 자동 처리합니다.
 
 재실행 방법도 알려주세요:
 ```
-재실행: node lib/convert.js doc-configs/{파일명}.json
-검증:   node lib/convert.js doc-configs/{파일명}.json --validate
+재실행:     node lib/convert.js doc-configs/{파일명}.json
+검증:       node lib/convert.js doc-configs/{파일명}.json --validate
+자가개선:   node lib/convert.js doc-configs/{파일명}.json --pipeline
 재검증: python -X utf8 tools/validate-docx.py output/{파일명}.docx
 테스트: npm test
 ```

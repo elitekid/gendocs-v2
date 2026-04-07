@@ -457,24 +457,29 @@ def simulate_layout(report):
                     section = elem.get('section', '?')
                     recommendations.append({
                         'type': 'IMAGE_NEEDS_PAGE_BREAK',
+                        'code': 'IMAGE_NEEDS_PAGE_BREAK',
                         'severity': 'WARN',
                         'page': page_num,
                         'index': elem['index'],
+                        'section': section,
                         'message': f'이미지({elem["width_pt"]:.0f}x{elem["height_pt"]:.0f}pt)가 이전 콘텐츠와 같은 페이지에 배치됨',
                         'detail': f'섹션 "{section}" 앞에 페이지 나누기를 추가하면 이미지가 깔끔하게 표시됩니다',
                         'action': f'이미지 포함 섹션 앞에 pageBreak() 추가 권장',
+                        'context': {'imageSize': {'width': round(elem.get('width_pt', 0)), 'height': round(elem.get('height_pt', 0))}, 'pageRemaining': round(remaining)},
                     })
 
                 # 이미지가 페이지 하단에 걸쳐 잘릴 수 있는지
                 if remaining < 0:
                     recommendations.append({
                         'type': 'IMAGE_OVERFLOW',
+                        'code': 'IMAGE_OVERFLOW',
                         'severity': 'WARN',
                         'page': page_num,
                         'index': elem['index'],
                         'message': f'이미지가 페이지 경계를 넘김 (초과 {-remaining:.0f}pt)',
                         'detail': f'Word가 자동으로 다음 페이지로 밀 수 있으나, 앞에 빈 공간이 발생할 수 있음',
                         'action': f'이미지 섹션 앞에 pageBreak() 추가하여 의도적으로 배치 권장',
+                        'context': {'overflow': round(-remaining)},
                     })
 
             # 규칙 2: 제목이 페이지 맨 하단에 혼자 남음 (orphan heading)
@@ -483,12 +488,14 @@ def simulate_layout(report):
                 if remaining < 60:  # 제목 아래 60pt 미만 공간 → 내용 들어갈 자리 없음
                     recommendations.append({
                         'type': 'ORPHAN_HEADING',
+                        'code': 'ORPHAN_HEADING',
                         'severity': 'INFO',
                         'page': page_num,
                         'index': elem['index'],
                         'message': f'H{elem["level"]} "{elem["text"][:30]}" 이 페이지 하단에 위치 (남은 공간 {remaining:.0f}pt)',
                         'detail': f'제목만 현재 페이지에 남고 내용은 다음 페이지로 넘어갈 수 있음',
                         'action': f'제목 앞에 pageBreak() 추가 고려',
+                        'context': {'headingLevel': elem['level'], 'remainingSpace': round(remaining)},
                     })
 
             # 규칙 3: 큰 테이블이 페이지 중간에서 잘림
@@ -497,12 +504,14 @@ def simulate_layout(report):
                 if elem['est_height'] > remaining and remaining < USABLE_HEIGHT_PT * 0.4:
                     recommendations.append({
                         'type': 'TABLE_SPLIT',
+                        'code': 'TABLE_SPLIT',
                         'severity': 'INFO',
                         'page': page_num,
                         'index': elem['index'],
                         'message': f'테이블({elem["rows"]}행)이 페이지 하단에서 잘릴 수 있음',
                         'detail': f'테이블 높이 ~{elem["est_height"]:.0f}pt, 남은 공간 ~{remaining:.0f}pt',
                         'action': f'테이블 앞에 pageBreak() 추가 또는 테이블 크기 조정 고려',
+                        'context': {'rows': elem.get('rows', 0), 'tableHeight': round(elem.get('est_height', 0)), 'remainingSpace': round(remaining)},
                     })
 
     layout = {
@@ -717,10 +726,12 @@ def build_json_output(report, layout):
     all_issues = []
     for issue_text in issues_text:
         severity = 'WARN' if '[WARN]' in issue_text else 'INFO'
+        cleaned = issue_text.replace('[WARN] ', '').replace('[INFO] ', '')
         all_issues.append({
             'type': 'STRUCTURE',
+            'code': 'STRUCTURE',
             'severity': severity,
-            'message': issue_text.replace('[WARN] ', '').replace('[INFO] ', ''),
+            'message': cleaned,
         })
     for rec in layout['recommendations']:
         all_issues.append(rec)

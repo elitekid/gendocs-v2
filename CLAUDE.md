@@ -11,6 +11,7 @@ gendocs는 **마크다운(MD)을 원본으로, 모든 형태의 비즈니스 문
 
 1. **파일 확인 필수**: 유사한 이름의 파일이 여러 개 존재할 때, 편집·변환 전에 정확한 파일 경로를 사용자에게 확인한다. 추측하여 잘못된 파일을 편집하지 않는다.
 2. **콘텐츠 범위 준수**: 소스 MD에 없는 내용을 추가·확장하지 않는다. 사용자가 "심플하게", "내용만 바꿔서" 등 범위를 제한하면 최소 산출물만 생성한다.
+3. **코드 수정 전 승인 필수**: 코드를 수정하기 전에 변경 내용과 이유를 설명하고 사용자 승인을 받는다. 승인 없이 코드를 수정하지 않는다.
 
 ---
 
@@ -102,7 +103,7 @@ node tools/score-docx.js doc-configs/문서.json --save
 - **C. 다이어그램 포함**: `<!-- diagram: 설명 -->` + mermaid/dot 코드블록 → 자동 PNG 렌더링 → DOCX 삽입
 - **D. 프로젝트 온보딩**: `npm install && pip install -r requirements.txt` → examples/ 확인
 - **E. 새 포맷 확장**: templates/{format}/ 템플릿 → converter → 검증 도구 → 성공 사례
-- **F. 레퍼런스 스타일 매칭**: extract-docx.py로 XML 분석 → converters/ 전용 converter 작성 → XML 수준 1:1 비교
+- **F. 레퍼런스 스타일 매칭**: extract-docx.py로 XML 분석 → doc-config + 전용 converter 작성 → XML 수준 1:1 비교
 
 ---
 
@@ -114,7 +115,7 @@ gendocs/
 ├── .claude/rules/                   ← 세부 참조 규칙 (theme, validation, diagram, xlsx)
 ├── .claude/skills/                  ← /gendocs, /validate 스킬
 ├── lib/                             ← 변환 엔진
-│   ├── converter-core.js            ← 공통 DOCX 변환 (파싱, 너비 계산, 변환, 빌드)
+│   ├── converter-core.js            ← DOCX 빌드 (테마/템플릿 로드 + IR 파이프라인 호출)
 │   ├── converter-xlsx.js            ← XLSX 변환 (시트 분할, sheets[], columnDefs)
 │   ├── xlsx-utils.js                ← XLSX 유틸 (Rich Text, 의미론적 색상, 타입 변환)
 │   ├── convert.js                   ← CLI 진입점 (DOCX/XLSX 자동 라우팅)
@@ -122,7 +123,16 @@ gendocs/
 │   ├── diagram-renderer.js          ← 다이어그램 렌더링 (Mermaid/Graphviz + 테마 매핑)
 │   ├── scoring.js                   ← 다차원 품질 점수 (순수 함수)
 │   ├── patterns.json                ← 공유 패턴 DB (tableWidths)
-│   └── reflections.json             ← 에피소딕 메모리 (교정 경험)
+│   ├── reflections.json             ← 에피소딕 메모리 (교정 경험)
+│   ├── ir/                          ← IR 중간 표현 모듈
+│   │   ├── schema.js                ← IR 노드 타입 + 팩토리 + validateIR
+│   │   ├── units.js                 ← pt/DXA/EMU 단위 변환
+│   │   ├── transformer.js           ← SemanticIR → LayoutIR (breakRules + cover/toc)
+│   │   ├── break-adapter.js         ← doc-config pageBreaks → breakRules[] 변환
+│   │   └── layout-to-docx.js        ← LayoutIR → DOCX elements 어댑터
+│   └── parsers/                     ← 파서 모듈
+│       ├── md-parser.js             ← MD → SemanticIR
+│       └── parse-utils.js           ← 파싱 유틸 (테이블, 이미지, 너비 계산)
 ├── doc-configs/                     ← 문서별 설정 JSON
 ├── source/                          ← 원본 MD
 ├── output/                          ← 생성 결과물
@@ -130,7 +140,7 @@ gendocs/
 ├── templates/                       ← 포맷별 템플릿
 │   ├── docx/ (basic.js, professional.js)
 │   └── xlsx/ (basic.js, data-spec.js)
-├── converters/                      ← 레거시 전용 변환 (커스텀 로직용)
+├── docs/architecture/               ← IR 아키텍처 설계 문서 (01~06)
 ├── examples/                        ← 성공 사례 (sample-api, sample-batch, sample-code-def)
 ├── tests/                           ← 단위 테스트 (unit/) + 스모크 테스트 (smoke/)
 └── tools/                           ← 검증·유틸리티
@@ -311,8 +321,19 @@ python -X utf8 tools/extract-docx.py output/문서.docx --json
 
 ## 고도화 로드맵
 
-- **Phase 1** (완료): DOCX 워크플로우 — professional 템플릿, 검증, 이미지, 페이지 나누기
-- **Phase 2** (완료): 자가 개선 루프 — Generic Converter + doc-config + 검증 피드백
-- **Phase 2.5** (완료): 고도화 — 회귀 테스트, 패턴 DB, Reflexion, 조기 종료, 품질 점수
-- **Phase 3** (진행): 포맷 확장 — XLSX 완료, PPTX/PDF 미완
-- **Phase 4** (진행): 자동화 — 다이어그램 완료, 배치/변경감지 미완
+### v1 (완료)
+- **Phase 1**: DOCX 워크플로우 — professional 템플릿, 검증, 이미지, 페이지 나누기
+- **Phase 2**: 자가 개선 루프 — Generic Converter + doc-config + 검증 피드백
+- **Phase 2.5**: 고도화 — 회귀 테스트, 패턴 DB, Reflexion, 조기 종료, 품질 점수
+- **Phase 3**: 포맷 확장 — XLSX 완료, 다이어그램 완료
+
+### v2 IR 아키텍처 전환 (완료: 0~6, 진행: 7~8)
+- **Phase 0** (완료): 기준선 확보 (tests/baseline/)
+- **Phase 1** (완료): IR 스키마 + 단위 유틸 (lib/ir/schema.js, units.js)
+- **Phase 2** (완료): MD 파서 추출 (lib/parsers/md-parser.js, parse-utils.js)
+- **Phase 3** (완료): breakRules 엔진 (lib/ir/transformer.js, break-adapter.js)
+- **Phase 4** (완료): DOCX 어댑터 + buildAndSave IR 교체 (lib/ir/layout-to-docx.js)
+- **Phase 5** (완료): 레거시 정리 + cover/toc IR 통합
+- **Phase 6** (완료): DOCX 품질 완성 + 기술 부채 정리 (parentIndex, preCheck CRITICAL)
+- **Phase 7** (예정): 자가개선 루프 — pipeline.js, fix-rules, reflections 재설계
+- **Phase 8** (예정): 포맷 확장 — XLSX IR(8a), DOCX 파서(8b), PDF(8c), PPTX(8d)
