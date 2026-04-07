@@ -66,6 +66,36 @@ def _calculate_margins(doc, skip_pages, body_size):
     return base_margin, right_margin, page_width or 792
 
 
+def _calculate_line_spacing(doc, skip_pages, body_size):
+    """본문 블록(body_size, 3줄+)에서 줄 간격 배수 계산 (쌍별 비율 중앙값)"""
+    ratios = []
+    for pi in range(len(doc)):
+        if pi in skip_pages:
+            continue
+        page = doc[pi]
+        for block in page.get_text("dict")["blocks"]:
+            if block["type"] != 0:
+                continue
+            lines = block.get("lines", [])
+            if len(lines) < 3:
+                continue
+            valid_spans = [s for l in lines for s in l.get("spans", []) if s["text"].strip()]
+            if not valid_spans:
+                continue
+            if not all(round(s["size"]) == body_size for s in valid_spans):
+                continue
+            for i in range(1, len(lines)):
+                pitch = lines[i]["bbox"][1] - lines[i-1]["bbox"][1]
+                lh = lines[i]["bbox"][3] - lines[i]["bbox"][1]
+                if lh > 0 and 0 < pitch < body_size * 3:
+                    ratios.append(pitch / lh)
+    if not ratios:
+        return None
+    ratios.sort()
+    multiple = round(ratios[len(ratios) // 2], 2)
+    return multiple if 0.8 <= multiple <= 3.0 else None
+
+
 def _find_spans_in_rect(text_blocks, rect):
     """캐싱된 text_blocks에서 rect 내부 span 반환"""
     result = []
@@ -396,6 +426,10 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
                     p_node["align"] = "center"
                 elif lx1 > content_right - 10 and lx0 > content_center:
                     p_node["align"] = "right"
+            # spacingBefore (heading 제외 — heading은 자체 spacing)
+            if not spacing_applied and spacing_before is not None and p_node.get("type") != "heading":
+                p_node["spacingBefore"] = spacing_before
+                spacing_applied = True
             nodes.append(p_node)
 
     return nodes
@@ -524,6 +558,37 @@ def process_table(table, page_num, page=None, drawings=None, text_blocks=None):
                     ir_rows[row_idx][col_idx]["align"] = "center"
                 elif s["bbox"][2] > cell_rect.x1 - 5 and s["bbox"][0] > cell_center:
                     ir_rows[row_idx][col_idx]["align"] = "right"
+
+    # cellBg (drawings에서)
+    if (drawings and hasattr(table, 'cols') and table.cols
+            and hasattr(table, 'rows') and table.rows):
+        n_rows_bg = len(table.rows) - 1
+        n_cols_bg = len(table.cols) - 1
+        for row_idx in range(min(n_rows_bg, len(ir_rows))):
+            for col_idx in range(min(n_cols_bg, col_count)):
+                cell_rect = fitz.Rect(
+                    table.cols[col_idx], table.rows[row_idx],
+                    table.cols[col_idx + 1], table.rows[row_idx + 1]
+                )
+                cell_area = cell_rect.width * cell_rect.height
+                if cell_area <= 0:
+                    continue
+                for d in drawings:
+                    fill = d.get("fill")
+                    if not fill:
+                        continue
+                    rgb = fill[:3]
+                    avg = sum(rgb) / 3
+                    if avg > 0.94 or avg < 0.06:
+                        continue
+                    hex_c = "".join(f"{int(c*255):02X}" for c in rgb)
+                    d_rect = fitz.Rect(d["rect"])
+                    overlap = cell_rect & d_rect
+                    if overlap.is_empty:
+                        continue
+                    if (overlap.width * overlap.height) > cell_area * 0.7:
+                        ir_rows[row_idx][col_idx]["bg"] = hex_c
+                        break
 
     node = {"type": "table", "columns": columns, "rows": ir_rows, "_page": page_num}
     if table_style:
@@ -962,6 +1027,7 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
 
     skip_lines = collect_skip_lines(doc)
     base_margin, right_margin, page_width_calc = _calculate_margins(doc, skip_pages, body_size)
+    line_spacing = _calculate_line_spacing(doc, skip_pages, body_size)
 
     # 문서 제목
     meta_title = doc.metadata.get("title", "") if doc.metadata else ""
@@ -975,6 +1041,7 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
         # 표지/목차 스킵
         if page_num in skip_pages:
             continue
+        prev_bottom_y = None  # 페이지마다 리셋
 
         # 다단 감지
         num_cols = detect_columns(page)
@@ -994,14 +1061,20 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
 
         page_dict = page.get_text("dict")
         text_blocks = [b for b in page_dict["blocks"] if b["type"] == 0]
+        page_drawings = page.get_drawings()  # 페이지당 1회 캐싱
+
         for block in text_blocks:
             page_elements.append({
                 "kind": "text", "y0": block["bbox"][1], "x0": block["bbox"][0], "data": block
             })
 
         for table in tables:
+            table_rect = fitz.Rect(table.bbox)
+            table_draws = [d for d in page_drawings
+                           if d.get("fill") and fitz.Rect(d["rect"]).intersects(table_rect)]
             page_elements.append({
-                "kind": "table", "y0": table.bbox[1], "x0": table.bbox[0], "data": table
+                "kind": "table", "y0": table.bbox[1], "x0": table.bbox[0],
+                "data": table, "drawings": table_draws
             })
 
         for img in page.get_images(full=False):
@@ -1019,10 +1092,16 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
         # 노드 생성
         for elem in page_elements:
             if elem["kind"] == "text":
+                block = elem["data"]
+                spacing_before = None
+                if prev_bottom_y is not None:
+                    gap = round(block["bbox"][1] - prev_bottom_y)
+                    if gap > body_size + 2:
+                        spacing_before = min(gap, 100)
                 nodes = process_text_block(
-                    elem["data"], level_map, body_size, skip_lines, table_rects, page_num,
+                    block, level_map, body_size, skip_lines, table_rects, page_num,
                     base_margin=base_margin, page_width=page_width_calc,
-                    right_margin=right_margin
+                    right_margin=right_margin, spacing_before=spacing_before
                 )
                 # PDF TOC 보너스: TOC에 있는 제목은 레벨 보정
                 for node in nodes:
@@ -1031,11 +1110,14 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
                         # TOC 레벨이 더 정확 (H1은 H2로 매핑 — 표지 정책)
                         node["level"] = max(toc_level, 2) if is_cover else toc_level
                 content.extend(nodes)
+                prev_bottom_y = block["bbox"][3]
             elif elem["kind"] == "table":
                 node = process_table(elem["data"], page_num, page,
+                                     drawings=elem.get("drawings"),
                                      text_blocks=text_blocks)
                 if node:
                     content.append(node)
+                prev_bottom_y = elem["data"].bbox[3]
             elif elem["kind"] == "image":
                 xref, rect = elem["data"]
                 node = process_image(doc, xref, rect, image_dir, page_num)
@@ -1096,14 +1178,18 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
 
     doc.close()
 
+    meta = {
+        "title": meta_title,
+        "pageCount": page_count,
+        "pageWidth": page_width,
+        "pageHeight": page_height,
+        "margins": margins,
+    }
+    if line_spacing is not None:
+        meta["lineSpacing"] = line_spacing
+
     return {
-        "meta": {
-            "title": meta_title,
-            "pageCount": page_count,
-            "pageWidth": page_width,
-            "pageHeight": page_height,
-            "margins": margins,
-        },
+        "meta": meta,
         "content": content,
         "headings": headings,
         "warnings": warnings,
