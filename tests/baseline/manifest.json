@@ -1,0 +1,20 @@
+{
+  "createdAt": "2026-04-03T04:11:32.478Z",
+  "files": [
+    {
+      "name": "sample-api.docx",
+      "size": 33438,
+      "source": "examples/sample-api/doc-config.json"
+    },
+    {
+      "name": "sample-batch.docx",
+      "size": 27065,
+      "source": "examples/sample-batch/doc-config.json"
+    },
+    {
+      "name": "sample-code-def.xlsx",
+      "size": 13853,
+      "source": "examples/sample-code-def/doc-config.json"
+    }
+  ]
+}
