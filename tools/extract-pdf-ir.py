@@ -195,10 +195,12 @@ def _span_style(span):
     style = {
         "font": span.get("font", ""),
         "size": round(span["size"], 1),
-        "color": f"{span.get('color', 0):06X}",
+        "color": f"{span.get('color', 0) & 0xFFFFFF:06X}",
     }
     if _is_bold(span):
         style["bold"] = True
+    if span.get("flags", 0) & 2:
+        style["italic"] = True
     if _is_mono_span(span):
         style["mono"] = True
     return style
@@ -292,7 +294,7 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
                           "runs": [{"text": line_text}], "style": style, "_page": page_num})
             continue
 
-        # 일반 paragraph — runs 생성 (font/size/color 보존)
+        # 일반 paragraph — runs 생성 (font/size/color/bold/italic 보존)
         runs = []
         for span in spans:
             text, font_info = safe_get_text(span)
@@ -300,9 +302,11 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
                 continue
             run = {"text": text, "font": span.get("font", ""),
                    "size": round(span["size"], 1),
-                   "color": f"{span.get('color', 0):06X}"}
+                   "color": f"{span.get('color', 0) & 0xFFFFFF:06X}"}
             if _is_bold(span):
                 run["bold"] = True
+            if span.get("flags", 0) & 2:
+                run["italic"] = True
             runs.append(run)
 
         if runs:
@@ -358,9 +362,10 @@ def process_table(table, page_num, page=None):
         sizes = []
         bold_count = 0
         total_count = 0
-        # 헤더 영역 (테이블 상단 첫 행) bold 판정
+        # 헤더 영역 (테이블 상단 첫 행) bold/color 판정
         header_bold_count = 0
         header_total = 0
+        header_spans_list = []
         header_bottom = table.bbox[1] + 30  # 헤더 행 대략 30pt
         for block in page.get_text("dict")["blocks"]:
             if block["type"] != 0:
@@ -378,15 +383,21 @@ def process_table(table, page_num, page=None):
                     # 헤더 행 판정
                     if span["bbox"][1] < header_bottom:
                         header_total += 1
+                        header_spans_list.append(span)
                         if _is_bold(span):
                             header_bold_count += 1
         if fonts:
             table_style["font"] = sorted(fonts)[0]
         if sizes:
             table_style["size"] = max(set(sizes), key=sizes.count)
-        # 헤더 행의 과반이 bold면 headerBold=True
         if header_total > 0:
             table_style["headerBold"] = header_bold_count > header_total * 0.5
+        # headerColor
+        header_colors = [f"{s['color'] & 0xFFFFFF:06X}" for s in header_spans_list if s["text"].strip()]
+        if header_colors:
+            most_common_color = max(set(header_colors), key=header_colors.count)
+            if most_common_color != "000000":
+                table_style["headerColor"] = most_common_color
 
     node = {"type": "table", "columns": columns, "rows": ir_rows, "_page": page_num}
     if table_style:
