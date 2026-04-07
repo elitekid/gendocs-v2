@@ -31,6 +31,56 @@ SECTION_NUM_PATTERN = re.compile(r'^(\d+\.(?:\d+\.?)*)\s')
 
 
 # ============================================================
+# 마진/줄간격 계산
+# ============================================================
+
+def _calculate_margins(doc, skip_pages, body_size):
+    """body_size 텍스트에서 좌/우 마진 + page_width 반환.
+    좌: 최빈값, 우: 95 퍼센타일 (n>=20) 또는 좌측 대칭.
+    """
+    x_lefts, x_rights = [], []
+    page_width = None
+    for pi in range(len(doc)):
+        if pi in skip_pages:
+            continue
+        page = doc[pi]
+        if page_width is None:
+            page_width = page.rect.width
+        for block in page.get_text("dict")["blocks"]:
+            if block["type"] != 0:
+                continue
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    if round(span["size"]) == body_size and span["text"].strip():
+                        x_lefts.append(round(span["bbox"][0]))
+                        x_rights.append(round(span["bbox"][2]))
+        if len(x_lefts) > 200:
+            break
+    base_margin = max(set(x_lefts), key=x_lefts.count) if x_lefts else 72
+    if len(x_rights) >= 20:
+        x_rights.sort()
+        right_edge = x_rights[int(len(x_rights) * 0.95)]
+        right_margin = round((page_width or 792) - right_edge)
+    else:
+        right_margin = base_margin
+    return base_margin, right_margin, page_width or 792
+
+
+def _find_spans_in_rect(text_blocks, rect):
+    """캐싱된 text_blocks에서 rect 내부 span 반환"""
+    result = []
+    for block in text_blocks:
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                if not span["text"].strip():
+                    continue
+                sx, sy = span["bbox"][0], span["bbox"][1]
+                if rect.x0 <= sx <= rect.x1 and rect.y0 <= sy <= rect.y1:
+                    result.append(span)
+    return result
+
+
+# ============================================================
 # Phase A: 표지/목차 감지
 # ============================================================
 
@@ -225,9 +275,18 @@ def _is_heading_candidate(line_text, font_size, body_size, level_map):
 # 2차 패스: 노드 생성
 # ============================================================
 
-def process_text_block(block, level_map, body_size, skip_lines, table_rects, page_num):
+def process_text_block(block, level_map, body_size, skip_lines, table_rects, page_num,
+                       base_margin=72, page_width=792, right_margin=72,
+                       spacing_before=None):
     """텍스트 블록 → IR 노드들"""
     nodes = []
+    spacing_applied = False
+
+    # 블록 내 유효 라인 수 (align 판정: 단일 라인만)
+    line_count = sum(
+        1 for l in block.get("lines", [])
+        if any(s["text"].strip() for s in l.get("spans", []))
+    )
 
     for line in block.get("lines", []):
         spans = line.get("spans", [])
@@ -264,15 +323,24 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             num_str = sec_match.group(1).rstrip('.')
             depth = num_str.count('.') + 1  # "0." → 1, "4.1" → 2, "4.1.2" → 3
             sec_level = min(depth + 1, 5)   # depth 1 → H2, 2 → H3, 3 → H4, max H5
-            nodes.append({"type": "heading", "level": sec_level, "text": line_text,
-                          "style": style, "_page": page_num})
+            h_node = {"type": "heading", "level": sec_level, "text": line_text,
+                      "style": style, "_page": page_num}
+            # indent
+            h_indent = round(spans[0]["bbox"][0] - base_margin)
+            if h_indent > 5:
+                h_node["indent"] = h_indent
+            nodes.append(h_node)
             continue
 
         # 2) 크기 기반 heading (본문보다 2pt+ 큰 폰트, 번호 없는 제목)
         level = _is_heading_candidate(line_text, spans[0]["size"], body_size, level_map)
         if level is not None and 3 <= len(line_text) <= 120:
-            nodes.append({"type": "heading", "level": level, "text": line_text,
-                          "style": style, "_page": page_num})
+            h_node = {"type": "heading", "level": level, "text": line_text,
+                      "style": style, "_page": page_num}
+            h_indent = round(spans[0]["bbox"][0] - base_margin)
+            if h_indent > 5:
+                h_node["indent"] = h_indent
+            nodes.append(h_node)
             continue
 
         # 3) 불릿/리스트 감지 (섹션 번호 heading이 아닌 것만)
@@ -310,12 +378,30 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             runs.append(run)
 
         if runs:
-            nodes.append({"type": "paragraph", "runs": runs, "_page": page_num})
+            p_node = {"type": "paragraph", "runs": runs, "_page": page_num}
+            # indent
+            p_indent = round(spans[0]["bbox"][0] - base_margin)
+            if p_indent > 5:
+                p_node["indent"] = p_indent
+            # align (단일 라인 블록만)
+            if line_count == 1:
+                content_left = base_margin
+                content_right = page_width - right_margin
+                content_center = (content_left + content_right) / 2
+                content_width = content_right - content_left
+                lx0 = line["bbox"][0]; lx1 = line["bbox"][2]
+                lcx = (lx0 + lx1) / 2; lw = lx1 - lx0
+                if (abs(lcx - content_center) < 20 and lw < content_width * 0.8
+                        and lx0 <= content_center):
+                    p_node["align"] = "center"
+                elif lx1 > content_right - 10 and lx0 > content_center:
+                    p_node["align"] = "right"
+            nodes.append(p_node)
 
     return nodes
 
 
-def process_table(table, page_num, page=None):
+def process_table(table, page_num, page=None, drawings=None, text_blocks=None):
     """pymupdf Table → IR table 노드 (컬럼별 실제 너비 + 페이지 스타일)"""
     data = table.extract()
     if not data or len(data) < 1:
@@ -354,20 +440,22 @@ def process_table(table, page_num, page=None):
             ir_row.append({"runs": [{"text": (text or "")}]})
         ir_rows.append(ir_row)
 
-    # 테이블 영역 내 텍스트 스타일 추출 (페이지에서)
+    # 테이블 영역 내 텍스트 스타일 추출
     table_style = {}
-    if page:
+    blocks_to_scan = text_blocks if text_blocks else (
+        [b for b in page.get_text("dict")["blocks"] if b["type"] == 0] if page else []
+    )
+    if blocks_to_scan:
         table_rect = fitz.Rect(table.bbox)
         fonts = set()
         sizes = []
         bold_count = 0
         total_count = 0
-        # 헤더 영역 (테이블 상단 첫 행) bold/color 판정
         header_bold_count = 0
         header_total = 0
         header_spans_list = []
-        header_bottom = table.bbox[1] + 30  # 헤더 행 대략 30pt
-        for block in page.get_text("dict")["blocks"]:
+        header_bottom = table.bbox[1] + 30
+        for block in blocks_to_scan:
             if block["type"] != 0:
                 continue
             block_rect = fitz.Rect(block["bbox"])
@@ -398,6 +486,44 @@ def process_table(table, page_num, page=None):
             most_common_color = max(set(header_colors), key=header_colors.count)
             if most_common_color != "000000":
                 table_style["headerColor"] = most_common_color
+
+    # cellPadding (첫 셀 bbox 기준, 헤더 행 — 오차 가능)
+    if (blocks_to_scan and hasattr(table, 'rows') and table.rows
+            and hasattr(table, 'cols') and table.cols
+            and len(table.rows) >= 2 and len(table.cols) >= 2):
+        cell0_rect = fitz.Rect(table.cols[0], table.rows[0], table.cols[1], table.rows[1])
+        spans_in_cell0 = _find_spans_in_rect(blocks_to_scan, cell0_rect)
+        if spans_in_cell0:
+            s = spans_in_cell0[0]
+            pl = round(s["bbox"][0] - table.cols[0])
+            pt_ = round(s["bbox"][1] - table.rows[0])
+            table_style["cellPadding"] = {
+                "left": max(pl, 0), "top": max(pt_, 0),
+                "right": max(pl, 0), "bottom": max(pt_, 0),
+            }
+
+    # 셀 align (t.cols + t.rows 있을 때만)
+    if (blocks_to_scan and hasattr(table, 'cols') and table.cols and len(table.cols) > 1
+            and hasattr(table, 'rows') and table.rows and len(table.rows) > 1):
+        n_rows = len(table.rows) - 1
+        n_cols = len(table.cols) - 1
+        for row_idx in range(min(n_rows, len(ir_rows))):
+            for col_idx in range(min(n_cols, col_count)):
+                cell_rect = fitz.Rect(
+                    table.cols[col_idx], table.rows[row_idx],
+                    table.cols[col_idx + 1], table.rows[row_idx + 1]
+                )
+                cell_width = cell_rect.width
+                cell_center = (cell_rect.x0 + cell_rect.x1) / 2
+                spans = _find_spans_in_rect(blocks_to_scan, cell_rect)
+                if not spans:
+                    continue
+                s = spans[0]
+                scx = (s["bbox"][0] + s["bbox"][2]) / 2
+                if abs(scx - cell_center) < cell_width * 0.2:
+                    ir_rows[row_idx][col_idx]["align"] = "center"
+                elif s["bbox"][2] > cell_rect.x1 - 5 and s["bbox"][0] > cell_center:
+                    ir_rows[row_idx][col_idx]["align"] = "right"
 
     node = {"type": "table", "columns": columns, "rows": ir_rows, "_page": page_num}
     if table_style:
@@ -835,6 +961,7 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
         body_size, level_map = identify_headers(doc, skip_pages)
 
     skip_lines = collect_skip_lines(doc)
+    base_margin, right_margin, page_width_calc = _calculate_margins(doc, skip_pages, body_size)
 
     # 문서 제목
     meta_title = doc.metadata.get("title", "") if doc.metadata else ""
@@ -893,7 +1020,9 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
         for elem in page_elements:
             if elem["kind"] == "text":
                 nodes = process_text_block(
-                    elem["data"], level_map, body_size, skip_lines, table_rects, page_num
+                    elem["data"], level_map, body_size, skip_lines, table_rects, page_num,
+                    base_margin=base_margin, page_width=page_width_calc,
+                    right_margin=right_margin
                 )
                 # PDF TOC 보너스: TOC에 있는 제목은 레벨 보정
                 for node in nodes:
@@ -903,7 +1032,8 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
                         node["level"] = max(toc_level, 2) if is_cover else toc_level
                 content.extend(nodes)
             elif elem["kind"] == "table":
-                node = process_table(elem["data"], page_num, page)
+                node = process_table(elem["data"], page_num, page,
+                                     text_blocks=text_blocks)
                 if node:
                     content.append(node)
             elif elem["kind"] == "image":
