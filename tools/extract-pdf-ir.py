@@ -306,9 +306,152 @@ def safe_get_text(span):
     return text, font_info
 
 
+def _measure_cell_padding_pdfminer(pdf_path, page_num, page_height,
+                                    grid_cols, grid_rows, col_count):
+    """pdfminer LTChar로 컬럼별 셀 패딩을 정확히 측정.
+
+    데이터 행(헤더 제외)에서 컬럼별 최소 L/R/T/B 패딩을 측정.
+    Returns: (table_padding, column_paddings)
+      - table_padding: {"left": median_L, "top": median_T, ...} 테이블 대표값
+      - column_paddings: [{"left":L, "top":T, "right":R, "bottom":B}, ...] 컬럼별
+    """
+    try:
+        from pdfminer.high_level import extract_pages
+        from pdfminer.layout import LTChar
+    except ImportError:
+        return None, None
+
+    def to_pm_y(y):
+        return page_height - y
+
+    chars = []
+    try:
+        for page_layout in extract_pages(pdf_path, page_numbers=[page_num]):
+            def walk(obj):
+                if isinstance(obj, LTChar):
+                    chars.append(obj)
+                if hasattr(obj, '__iter__'):
+                    for child in obj:
+                        walk(child)
+            walk(page_layout)
+    except Exception:
+        return None, None
+
+    if not chars:
+        return None, None
+
+    n_cols = min(len(grid_cols) - 1, col_count)
+    col_left = [[] for _ in range(n_cols)]
+    col_right = [[] for _ in range(n_cols)]
+    col_top = [[] for _ in range(n_cols)]
+    col_bottom = [[] for _ in range(n_cols)]
+
+    n_data_rows = min(len(grid_rows) - 2, 5)
+    for ri in range(1, 1 + n_data_rows):
+        if ri >= len(grid_rows) - 1:
+            break
+        for ci in range(n_cols):
+            cx0, cx1 = grid_cols[ci], grid_cols[ci + 1]
+            ry_top = to_pm_y(grid_rows[ri])
+            ry_bot = to_pm_y(grid_rows[ri + 1])
+            if ry_top < ry_bot:
+                ry_top, ry_bot = ry_bot, ry_top
+
+            cell_chars = [c for c in chars
+                          if cx0 + 0.3 < c.x0 < cx1 - 0.3
+                          and ry_bot + 0.3 < c.y0 < ry_top - 0.3]
+            if not cell_chars:
+                continue
+
+            l = min(c.x0 for c in cell_chars) - cx0
+            r = cx1 - max(c.x1 for c in cell_chars)
+            t = ry_top - max(c.y1 for c in cell_chars)
+            b = min(c.y0 for c in cell_chars) - ry_bot
+
+            if 0 <= l < 20: col_left[ci].append(l)
+            if 0 <= r < 200: col_right[ci].append(r)  # R은 텍스트 길이에 따라 큼
+            if 0 <= t < 20: col_top[ci].append(t)
+            if 0 <= b < 20: col_bottom[ci].append(b)
+
+    # 컬럼별 최소 L, T/B 중앙값
+    column_paddings = []
+    all_left = []
+    all_top = []
+    all_bottom = []
+    for ci in range(n_cols):
+        lp = round(min(col_left[ci]), 1) if col_left[ci] else 2.0
+        tp = round(sorted(col_top[ci])[len(col_top[ci])//2], 1) if col_top[ci] else 2.0
+        bp = round(sorted(col_bottom[ci])[len(col_bottom[ci])//2], 1) if col_bottom[ci] else 2.0
+        # R패딩 = L패딩과 동일 (R측정값은 텍스트 길이에 의존하므로 신뢰 불가)
+        rp = lp
+        column_paddings.append({"left": lp, "top": tp, "right": rp, "bottom": bp})
+        all_left.append(lp)
+        all_top.append(tp)
+        all_bottom.append(bp)
+
+    # 테이블 대표값 (중앙값)
+    all_left.sort()
+    all_top.sort()
+    all_bottom.sort()
+    tbl_l = all_left[len(all_left)//2] if all_left else 2.0
+    tbl_t = all_top[len(all_top)//2] if all_top else 2.0
+    tbl_b = all_bottom[len(all_bottom)//2] if all_bottom else 2.0
+    table_padding = {"left": tbl_l, "top": tbl_t, "right": tbl_l, "bottom": tbl_b}
+
+    return table_padding, column_paddings
+
+
 def _is_bold(span):
     """flags bit4 (bold) 판정 — PDF 표준"""
     return bool(span.get("flags", 0) & 16) or "Bold" in span.get("font", "")
+
+
+def _detect_faux_bold_header(page, table_bbox, header_bottom_y):
+    """pdfminer.six로 faux bold (stroke 기반) 감지.
+
+    PDF에서 텍스트 렌더링 모드를 fill+stroke로 설정하고 linewidth > 0이면
+    글자가 두꺼워 보이지만 pymupdf flags에는 bold로 안 잡힘.
+    헤더 영역의 글자 중 linewidth > 0인 비율이 50% 이상이면 bold로 판정.
+    """
+    try:
+        from pdfminer.high_level import extract_pages
+        from pdfminer.layout import LTTextBox, LTTextLine, LTChar
+    except ImportError:
+        return False
+
+    pdf_path = page.parent.name
+    page_num = page.number
+    page_height = page.rect.height
+
+    # pdfminer y좌표는 bottom-up, pymupdf는 top-down
+    hdr_y_min = page_height - header_bottom_y
+    hdr_y_max = page_height - table_bbox[1]
+    hdr_x_min = table_bbox[0]
+    hdr_x_max = table_bbox[2]
+
+    bold_count = 0
+    total_count = 0
+    try:
+        for page_layout in extract_pages(pdf_path, page_numbers=[page_num]):
+            for element in page_layout:
+                if not isinstance(element, (LTTextBox, LTTextLine)):
+                    continue
+                for line in element:
+                    if not hasattr(line, '__iter__'):
+                        continue
+                    for char in line:
+                        if not isinstance(char, LTChar):
+                            continue
+                        if (hdr_x_min <= char.x0 <= hdr_x_max and
+                                hdr_y_min <= char.y0 <= hdr_y_max):
+                            total_count += 1
+                            lw = getattr(char.graphicstate, 'linewidth', 0)
+                            if lw and lw > 0:
+                                bold_count += 1
+    except Exception:
+        return False
+
+    return total_count > 0 and bold_count > total_count * 0.5
 
 
 def _span_style(span):
@@ -495,22 +638,29 @@ def process_table(table, page_num, page=None, drawings=None, text_blocks=None):
 
     col_count = len(valid_headers)
 
-    # 컬럼/행 경계 추출: t.cols → drawings fallback → 균등 분배
+    # 컬럼/행 경계 추출: cells → drawings fallback → 균등 분배
     grid_cols = None
     grid_rows = None
-    if hasattr(table, 'cols') and table.cols and isinstance(table.cols[0], (int, float)):
-        grid_cols = list(table.cols)
-    if hasattr(table, 'rows') and table.rows and isinstance(table.rows[0], (int, float)):
-        grid_rows = list(table.rows)
 
-    # drawings fallback (t.cols가 없거나 숫자가 아닐 때)
+    # 1순위: table.cells에서 x/y 좌표 추출 (pymupdf 1.26+)
+    if hasattr(table, 'cells') and table.cells:
+        xs = sorted(set(round(c[0], 1) for c in table.cells) |
+                     set(round(c[2], 1) for c in table.cells))
+        ys = sorted(set(round(c[1], 1) for c in table.cells) |
+                     set(round(c[3], 1) for c in table.cells))
+        if len(xs) >= col_count + 1:
+            grid_cols = xs
+        if len(ys) >= 2:
+            grid_rows = ys
+
+    # 2순위: drawings fallback
     if grid_cols is None and drawings:
         dc, dr = _extract_table_grid(table, drawings)
         if dc and len(dc) >= col_count + 1:
             grid_cols = dc
         elif dc and len(dc) >= 2:
             grid_cols = dc
-        if dr and len(dr) >= 2:
+        if grid_rows is None and dr and len(dr) >= 2:
             grid_rows = dr
 
     # 컬럼 너비 계산
@@ -524,6 +674,13 @@ def process_table(table, page_num, page=None, drawings=None, text_blocks=None):
         col_widths = [round(table_width / col_count, 1)] * col_count
 
     columns = [{"header": h, "width": col_widths[i]} for i, h in enumerate(valid_headers)]
+
+    # 행 높이 계산 (grid_rows가 있을 때)
+    # PDF 셀 bbox 높이를 그대로 사용 — Word trHeight(exact)와 시각적으로 일치
+    row_heights = None
+    if grid_rows and len(grid_rows) >= 2:
+        row_heights = [round(grid_rows[j + 1] - grid_rows[j], 1)
+                       for j in range(len(grid_rows) - 1)]
 
     ir_rows = []
     for row in rows_data:
@@ -572,7 +729,13 @@ def process_table(table, page_num, page=None, drawings=None, text_blocks=None):
         if sizes:
             table_style["size"] = max(set(sizes), key=sizes.count)
         if header_total > 0:
-            table_style["headerBold"] = header_bold_count > header_total * 0.5
+            if header_bold_count > header_total * 0.5:
+                table_style["headerBold"] = True
+            else:
+                # pymupdf가 못 잡는 faux bold 감지: pdfminer linewidth 체크
+                table_style["headerBold"] = _detect_faux_bold_header(
+                    page, table.bbox, header_bottom)
+
         # headerColor
         header_colors = [f"{s['color'] & 0xFFFFFF:06X}" for s in header_spans_list if s["text"].strip()]
         if header_colors:
@@ -580,42 +743,44 @@ def process_table(table, page_num, page=None, drawings=None, text_blocks=None):
             if most_common_color != "000000":
                 table_style["headerColor"] = most_common_color
 
-    # cellPadding (첫 셀 bbox 기준, 헤더 행 — 오차 가능)
-    if (blocks_to_scan and grid_cols and grid_rows
-            and len(grid_cols) >= 2 and len(grid_rows) >= 2):
-        cell0_rect = fitz.Rect(grid_cols[0], grid_rows[0], grid_cols[1], grid_rows[1])
-        spans_in_cell0 = _find_spans_in_rect(blocks_to_scan, cell0_rect)
-        if spans_in_cell0:
-            s = spans_in_cell0[0]
-            pl = round(s["bbox"][0] - grid_cols[0])
-            pt_ = round(s["bbox"][1] - grid_rows[0])
-            table_style["cellPadding"] = {
-                "left": max(pl, 0), "top": max(pt_, 0),
-                "right": max(pl, 0), "bottom": max(pt_, 0),
-            }
+    # cellPadding — pdfminer LTRect(셀 경계) + LTChar(글자 위치)로 정확 측정
+    # 컬럼별 + 테이블 대표 cellPadding (pdfminer 기반 정밀 측정)
+    if page and grid_cols and grid_rows and len(grid_cols) >= 2 and len(grid_rows) >= 3:
+        tbl_pad, col_pads = _measure_cell_padding_pdfminer(
+            page.parent.name, page.number, page.rect.height,
+            grid_cols, grid_rows, col_count)
+        if tbl_pad:
+            table_style["cellPadding"] = tbl_pad
+        if col_pads:
+            for ci, cp in enumerate(col_pads):
+                if ci < len(columns):
+                    columns[ci]["padding"] = cp
 
-    # 셀 align (grid_cols + grid_rows 있을 때만)
+    # 셀 align — 데이터 행은 left 기본값. 헤더 행만 center 감지.
+    # (데이터 행은 좁은 컬럼에서 오탐 빈발하므로 감지하지 않음)
     if (blocks_to_scan and grid_cols and grid_rows
             and len(grid_cols) > 1 and len(grid_rows) > 1):
-        n_rows_a = len(grid_rows) - 1
-        n_cols_a = len(grid_cols) - 1
-        for row_idx in range(min(n_rows_a, len(ir_rows))):
-            for col_idx in range(min(n_cols_a, col_count)):
-                cell_rect = fitz.Rect(
-                    grid_cols[col_idx], grid_rows[row_idx],
-                    grid_cols[col_idx + 1], grid_rows[row_idx + 1]
-                )
-                cell_width = cell_rect.width
-                cell_center = (cell_rect.x0 + cell_rect.x1) / 2
-                spans = _find_spans_in_rect(blocks_to_scan, cell_rect)
-                if not spans:
-                    continue
-                s = spans[0]
-                scx = (s["bbox"][0] + s["bbox"][2]) / 2
+        # 헤더 행(row 0)의 각 셀 center 여부 판정
+        header_center_count = 0
+        for col_idx in range(min(len(grid_cols) - 1, col_count)):
+            cell_rect = fitz.Rect(
+                grid_cols[col_idx], grid_rows[0],
+                grid_cols[col_idx + 1], grid_rows[1]
+            )
+            cell_center = (cell_rect.x0 + cell_rect.x1) / 2
+            cell_width = cell_rect.width
+            spans = _find_spans_in_rect(blocks_to_scan, cell_rect)
+            if spans:
+                scx = (spans[0]["bbox"][0] + spans[0]["bbox"][2]) / 2
                 if abs(scx - cell_center) < cell_width * 0.2:
-                    ir_rows[row_idx][col_idx]["align"] = "center"
-                elif s["bbox"][2] > cell_rect.x1 - 5 and s["bbox"][0] > cell_center:
-                    ir_rows[row_idx][col_idx]["align"] = "right"
+                    header_center_count += 1
+        # 과반수 이상이면 헤더 전체 center
+        if header_center_count > col_count * 0.5:
+            table_style["headerCenter"] = True
+
+    # headerBold인데 headerCenter 미감지 → bold 헤더는 대부분 center이므로 fallback
+    if table_style.get("headerBold") and not table_style.get("headerCenter"):
+        table_style["headerCenter"] = True
 
     # cellBg (drawings에서)
     if (drawings and grid_cols and grid_rows):
@@ -648,6 +813,11 @@ def process_table(table, page_num, page=None, drawings=None, text_blocks=None):
                         break
 
     node = {"type": "table", "columns": columns, "rows": ir_rows, "_page": page_num}
+    if row_heights:
+        node["rowHeights"] = row_heights
+    # pymupdf가 1행만 감지한 경우: extract()[0]이 데이터일 수 있음 (cross-page 연속)
+    if len(data) == 1:
+        node["_singleRow"] = True
     if table_style:
         node["style"] = table_style
     return node
@@ -896,14 +1066,27 @@ def _row_matches_headers(row, columns):
     return True
 
 
+def _headers_text_match(cols1, cols2):
+    """두 테이블의 헤더 텍스트가 정확히 동일한지"""
+    h1 = [c["header"] for c in cols1]
+    h2 = [c["header"] for c in cols2]
+    return h1 == h2
+
+
+def _columns_to_row(columns):
+    """columns의 header 텍스트를 IR 행(runs 배열)으로 변환"""
+    return [{"runs": [{"text": c["header"]}]} for c in columns]
+
+
 def merge_cross_page_tables(content):
-    """연속 테이블의 헤더+너비 비교 → 같은 페이지에서 분할된 테이블만 병합.
+    """연속 테이블의 헤더+너비 비교 → cross-page 분할 테이블 병합.
 
     병합 조건:
     1. 연속 table 노드 (사이에 다른 노드 없음)
-    2. 헤더 구조 동일 (_tables_match)
+    2. 헤더 구조 동일 (_tables_match) — 텍스트 or 너비 비율
     3. 같은 _page이거나 _page가 1 차이 (cross-page)
-    4. 빈 테이블(0행)은 제거
+    4. _singleRow 테이블(0행): 헤더를 데이터 행으로 변환하여 병합
+    5. N행 연속 테이블: 가짜 헤더(첫 행이 실제 데이터)를 행으로 복원
     """
     if not content:
         return content
@@ -913,32 +1096,60 @@ def merge_cross_page_tables(content):
     while i < len(content):
         node = content[i]
         if node.get("type") == "table":
-            # 0행 테이블 스킵
-            if not node.get("rows"):
+            # 0행 + _singleRow가 아닌 빈 테이블 스킵
+            if not node.get("rows") and not node.get("_singleRow"):
                 i += 1
                 continue
+            # _singleRow이면서 첫 테이블(앞에 병합 대상 없음): merged에 넣지 않고 다음에서 처리
+            # → 아래 while에서 선행 테이블과 합침
             # 다음 노드와 병합 시도
             while i + 1 < len(content):
                 next_node = content[i + 1]
                 if next_node.get("type") != "table":
                     break
-                # 0행이면 스킵
-                if not next_node.get("rows"):
-                    i += 1
-                    continue
                 # 페이지 차이 체크 (같은 페이지 또는 1페이지 차이만)
                 cur_page = node.get("_page")
                 next_page = next_node.get("_page")
                 if cur_page is not None and next_page is not None:
                     if abs(next_page - cur_page) > 1:
                         break
+                # 0행 _singleRow: 헤더를 데이터 행으로 변환하여 병합
+                if not next_node.get("rows") and next_node.get("_singleRow"):
+                    if _tables_match(node, next_node):
+                        node["rows"].append(_columns_to_row(next_node["columns"]))
+                        # rowHeights 병합 (_singleRow는 1행 = rowHeights[0])
+                        next_rh = next_node.get("rowHeights", [])
+                        if next_rh and node.get("rowHeights") is not None:
+                            node["rowHeights"].append(next_rh[0])
+                        i += 1
+                        continue
+                    else:
+                        break
+                # 0행이고 _singleRow 아님: 스킵
+                if not next_node.get("rows"):
+                    i += 1
+                    continue
                 if not _tables_match(node, next_node):
                     break
-                # 병합
+                # 병합: 가짜 헤더 복구 + 중복 헤더 스킵
                 next_rows = next_node["rows"]
+                next_rh = list(next_node.get("rowHeights", []))
                 if next_rows and _row_matches_headers(next_rows[0], node["columns"]):
                     next_rows = next_rows[1:]
+                    if next_rh:
+                        next_rh = next_rh[1:]  # 중복 헤더 높이도 스킵
+                # 헤더 텍스트가 다르면 = 가짜 헤더(실제 데이터) → 행으로 선행 삽입
+                if not _headers_text_match(node["columns"], next_node["columns"]):
+                    node["rows"].append(_columns_to_row(next_node["columns"]))
+                    # 가짜 헤더의 높이 = next_rh[0] (헤더 행 높이)
+                    if next_rh and node.get("rowHeights") is not None:
+                        node["rowHeights"].append(next_rh[0])
                 node["rows"].extend(next_rows)
+                # rowHeights 병합 (데이터 행 높이들)
+                if node.get("rowHeights") is not None and next_rh:
+                    # next_rh[0]은 헤더(이미 처리), [1:]은 데이터 행
+                    data_rh = next_rh[1:] if _headers_text_match(node["columns"], next_node["columns"]) else next_rh[1:]
+                    node["rowHeights"].extend(data_rh)
                 i += 1
             merged.append(node)
         else:
