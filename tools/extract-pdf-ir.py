@@ -1517,8 +1517,20 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
                 prev_bottom_y = elem["data"].bbox[3]
             elif elem["kind"] == "image":
                 xref, rect = elem["data"]
+                # spacingBefore
+                if prev_bottom_y is not None:
+                    gap = round(rect.y0 - prev_bottom_y)
+                    if gap > 0:
+                        img_spacing = min(gap, 100)
+                    else:
+                        img_spacing = None
+                else:
+                    img_spacing = None
                 node = process_image(doc, xref, rect, image_dir, page_num)
+                if img_spacing is not None:
+                    node["spacingBefore"] = img_spacing
                 content.append(node)
+                prev_bottom_y = rect.y1
 
     # 후처리 파이프라인
     content = merge_mono_lines(content)          # 모노 줄 → codeBlock
