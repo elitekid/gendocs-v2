@@ -126,6 +126,12 @@ def _extract_table_grid(table, page_drawings):
                 elif h < 3 and w > 5:  # 낮고 넓은 = 가로선
                     horizontal_ys.add(round(r.y0))
 
+    # 테이블 bbox 경계를 항상 포함 (우측/하단 선이 drawings에 없는 경우 보완)
+    vertical_xs.add(round(trect.x0))
+    vertical_xs.add(round(trect.x1))
+    horizontal_ys.add(round(trect.y0))
+    horizontal_ys.add(round(trect.y1))
+
     col_xs = sorted(vertical_xs) if len(vertical_xs) >= 2 else None
     row_ys = sorted(horizontal_ys) if len(horizontal_ys) >= 2 else None
     return col_xs, row_ys
