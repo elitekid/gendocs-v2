@@ -623,16 +623,29 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             nodes.append(h_node)
             continue
 
-        # 3) 불릿/리스트 감지 (섹션 번호 heading이 아닌 것만)
-        if BULLET_PATTERN.match(line_text) or NUMBERED_LIST_PATTERN.match(line_text):
-            nodes.append({"type": "listItem", "runs": [{"text": line_text}],
-                          "style": style, "_page": page_num})
-            continue
+        # 3) 불릿/리스트 감지 — PDF 원본은 dash 텍스트 그대로 유지 (paragraph + indent)
+        # (listItem으로 변환하면 Word가 ● 불릿으로 바꿔서 원본과 달라짐)
 
         # 코드블록 감지 (flags bit3 모노스페이스)
         if all(_is_mono_span(s) for s in spans):
-            nodes.append({"_mono_line": line_text, "_mono_style": _span_style(spans[0], faux_bold_map),
-                          "_page": page_num})
+            # x좌표 기반 indent → 공백 정규화
+            mono_x = spans[0]["bbox"][0]
+            mono_indent = mono_x - base_margin
+            # 텍스트 앞 기존 공백 수
+            existing_spaces = len(line_text) - len(line_text.lstrip(' '))
+            # 기존 공백의 폭 추정 (모노 폰트: 1 space ≈ fontSize * 0.6)
+            mono_size = spans[0]["size"]
+            space_width = mono_size * 0.6
+            existing_indent = existing_spaces * space_width
+            # 추가 indent 필요분
+            extra_indent = mono_indent - existing_indent
+            if extra_indent > space_width * 0.5:
+                extra_spaces = round(extra_indent / space_width)
+                mono_text = " " * extra_spaces + line_text
+            else:
+                mono_text = line_text
+            nodes.append({"_mono_line": mono_text, "_mono_style": _span_style(spans[0], faux_bold_map),
+                          "_page": page_num, "_y": spans[0]["bbox"][1]})
             continue
 
         # callout 감지
@@ -648,10 +661,14 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             text, font_info = safe_get_text(span)
             if text is None:
                 continue
-            run = {"text": text, "font": span.get("font", ""),
+            run = {"text": text, "font": _map_font_name(span.get("font", "")),
                    "size": round(span["size"], 1),
                    "color": f"{span.get('color', 0) & 0xFFFFFF:06X}"}
-            if _is_bold(span):
+            is_bold = _is_bold(span)
+            if not is_bold and faux_bold_map:
+                span_y = round(span["bbox"][1])
+                is_bold = span_y in faux_bold_map
+            if is_bold:
                 run["bold"] = True
             if span.get("flags", 0) & 2:
                 run["italic"] = True
@@ -931,37 +948,50 @@ def process_image(doc, xref, rect, image_dir, page_num):
 # ============================================================
 
 def merge_mono_lines(nodes):
-    """연속 모노스페이스 줄 → codeBlock 노드로 병합"""
+    """연속 모노스페이스 줄 → codeBlock 노드로 병합 (줄 간격 측정 포함)"""
     merged = []
     code_lines = []
+    code_ys = []
     code_page = None
     code_style = None
+
+    def _flush():
+        cb = {"type": "codeBlock", "lines": code_lines,
+              "language": "", "_page": code_page}
+        if code_style:
+            cb["style"] = dict(code_style)
+        # 줄 간격 계산 (y좌표 차이의 중앙값)
+        if len(code_ys) >= 2:
+            gaps = [round(code_ys[i+1] - code_ys[i], 1)
+                    for i in range(len(code_ys) - 1) if code_ys[i+1] > code_ys[i]]
+            if gaps:
+                gaps.sort()
+                median_gap = gaps[len(gaps) // 2]
+                if "style" not in cb:
+                    cb["style"] = {}
+                cb["style"]["lineSpacing"] = median_gap
+        merged.append(cb)
 
     for node in nodes:
         if "_mono_line" in node:
             code_lines.append(node["_mono_line"])
+            if node.get("_y") is not None:
+                code_ys.append(node["_y"])
             if code_page is None:
                 code_page = node.get("_page")
             if code_style is None:
                 code_style = node.get("_mono_style")
         else:
             if code_lines:
-                cb = {"type": "codeBlock", "lines": code_lines,
-                      "language": "", "_page": code_page}
-                if code_style:
-                    cb["style"] = code_style
-                merged.append(cb)
+                _flush()
                 code_lines = []
+                code_ys = []
                 code_page = None
                 code_style = None
             merged.append(node)
 
     if code_lines:
-        cb = {"type": "codeBlock", "lines": code_lines,
-              "language": "", "_page": code_page}
-        if code_style:
-            cb["style"] = code_style
-        merged.append(cb)
+        _flush()
 
     return merged
 
@@ -1282,9 +1312,8 @@ def insert_page_breaks(content):
 # ============================================================
 
 def strip_internal_meta(content):
-    """내부 전용 _page, _mono_style 등 제거"""
+    """내부 전용 _mono_style 등 제거 (_page는 DOCX 페이지 경계용으로 유지)"""
     for node in content:
-        node.pop("_page", None)
         node.pop("_mono_style", None)
     return content
 
