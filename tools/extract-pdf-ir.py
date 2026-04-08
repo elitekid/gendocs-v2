@@ -406,6 +406,37 @@ def _is_bold(span):
     return bool(span.get("flags", 0) & 16) or "Bold" in span.get("font", "")
 
 
+def _build_faux_bold_map(pdf_path, page_num, page_height):
+    """pdfminer로 페이지 내 faux bold 영역을 한 번에 수집.
+
+    Returns: set of rounded pymupdf y좌표 (top-down). 해당 y에 faux bold 텍스트 존재.
+    _span_style()에서 span의 y좌표가 이 세트에 있으면 bold.
+    """
+    try:
+        from pdfminer.high_level import extract_pages
+        from pdfminer.layout import LTChar
+    except ImportError:
+        return set()
+
+    bold_ys = set()  # pymupdf y좌표 (top-down)
+    try:
+        for page_layout in extract_pages(pdf_path, page_numbers=[page_num]):
+            def walk(obj):
+                if isinstance(obj, LTChar):
+                    lw = getattr(obj.graphicstate, 'linewidth', 0)
+                    if lw and lw > 0:
+                        # pdfminer y1 (글자 상단, bottom-up) → pymupdf y (top-down)
+                        pymupdf_y = round(page_height - obj.y1)
+                        bold_ys.add(pymupdf_y)
+                if hasattr(obj, '__iter__'):
+                    for child in obj:
+                        walk(child)
+            walk(page_layout)
+    except Exception:
+        pass
+    return bold_ys
+
+
 def _detect_faux_bold_header(page, table_bbox, header_bottom_y):
     """pdfminer.six로 faux bold (stroke 기반) 감지.
 
@@ -454,15 +485,39 @@ def _detect_faux_bold_header(page, table_bbox, header_bottom_y):
     return total_count > 0 and bold_count > total_count * 0.5
 
 
-def _span_style(span):
-    """span에서 스타일 속성 추출"""
+# PDF 내부 폰트명 → Word 인식 폰트명
+_FONT_MAP = {
+    "MalgunGothic": "맑은 고딕",
+    "MalgunGothicBold": "맑은 고딕",
+    "Gulim": "Gulim",
+    "GulimChe": "GulimChe",
+    "Dotum": "Dotum",
+    "DotumChe": "DotumChe",
+    "Batang": "Batang",
+}
+
+
+def _map_font_name(raw_name):
+    """PDF 폰트명에서 서브셋 접두사 제거 + Word 폰트명 매핑"""
+    # 서브셋 접두사 제거 (BCDGEE+Gulim → Gulim)
+    name = raw_name.split("+")[-1] if "+" in raw_name else raw_name
+    return _FONT_MAP.get(name, name)
+
+
+def _span_style(span, faux_bold_map=None):
+    """span에서 스타일 속성 추출 (faux bold 포함)"""
     style = {
-        "font": span.get("font", ""),
+        "font": _map_font_name(span.get("font", "")),
         "size": round(span["size"], 1),
         "color": f"{span.get('color', 0) & 0xFFFFFF:06X}",
     }
     if _is_bold(span):
         style["bold"] = True
+    elif faux_bold_map:
+        # pymupdf span의 y좌표가 faux bold 맵에 있으면 bold
+        span_y = round(span["bbox"][1])
+        if span_y in faux_bold_map:
+            style["bold"] = True
     if span.get("flags", 0) & 2:
         style["italic"] = True
     if _is_mono_span(span):
@@ -470,11 +525,11 @@ def _span_style(span):
     return style
 
 
-def _line_style(spans):
+def _line_style(spans, faux_bold_map=None):
     """줄의 대표 스타일 (첫 span 기준)"""
     if not spans:
         return {}
-    return _span_style(spans[0])
+    return _span_style(spans[0], faux_bold_map)
 
 
 def _is_heading_candidate(line_text, font_size, body_size, level_map):
@@ -491,7 +546,7 @@ def _is_heading_candidate(line_text, font_size, body_size, level_map):
 
 def process_text_block(block, level_map, body_size, skip_lines, table_rects, page_num,
                        base_margin=72, page_width=792, right_margin=72,
-                       spacing_before=None):
+                       spacing_before=None, faux_bold_map=None):
     """텍스트 블록 → IR 노드들"""
     nodes = []
     spacing_applied = False
@@ -526,9 +581,14 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             continue
 
         first_bold = _is_bold(spans[0])
+        # faux bold 체크
+        if not first_bold and faux_bold_map:
+            span_y = round(spans[0]["bbox"][1])
+            if span_y in faux_bold_map:
+                first_bold = True
         primary_size = round(spans[0]["size"])
 
-        style = _line_style(spans)
+        style = _line_style(spans, faux_bold_map)
 
         # 1) 섹션 번호 heading — 번호 깊이가 가장 정확한 레벨 정보
         #    (bold 또는 본문보다 큰 폰트 + 짧은 줄)
@@ -565,7 +625,7 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
 
         # 코드블록 감지 (flags bit3 모노스페이스)
         if all(_is_mono_span(s) for s in spans):
-            nodes.append({"_mono_line": line_text, "_mono_style": _span_style(spans[0]),
+            nodes.append({"_mono_line": line_text, "_mono_style": _span_style(spans[0], faux_bold_map),
                           "_page": page_num})
             continue
 
@@ -619,7 +679,8 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
     return nodes
 
 
-def process_table(table, page_num, page=None, drawings=None, text_blocks=None):
+def process_table(table, page_num, page=None, drawings=None, text_blocks=None,
+                   faux_bold_map=None):
     """pymupdf Table → IR table 노드 (컬럼별 실제 너비 + 페이지 스타일)"""
     data = table.extract()
     if not data or len(data) < 1:
@@ -725,16 +786,19 @@ def process_table(table, page_num, page=None, drawings=None, text_blocks=None):
                         if _is_bold(span):
                             header_bold_count += 1
         if fonts:
-            table_style["font"] = sorted(fonts)[0]
+            table_style["font"] = _map_font_name(sorted(fonts)[0])
         if sizes:
             table_style["size"] = max(set(sizes), key=sizes.count)
         if header_total > 0:
             if header_bold_count > header_total * 0.5:
                 table_style["headerBold"] = True
             else:
-                # pymupdf가 못 잡는 faux bold 감지: pdfminer linewidth 체크
-                table_style["headerBold"] = _detect_faux_bold_header(
-                    page, table.bbox, header_bottom)
+                # faux bold 감지: 헤더 행 첫 줄 span의 y좌표가 faux_bold_map에 있는지
+                if faux_bold_map and header_spans_list:
+                    first_hdr_y = round(header_spans_list[0]["bbox"][1])
+                    table_style["headerBold"] = first_hdr_y in faux_bold_map
+                else:
+                    table_style["headerBold"] = False
 
         # headerColor
         header_colors = [f"{s['color'] & 0xFFFFFF:06X}" for s in header_spans_list if s["text"].strip()]
@@ -1341,6 +1405,9 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
                 "message": f"페이지 {page_num + 1}: {num_cols}단 레이아웃 감지, 2단까지만 지원"
             })
 
+        # pdfminer faux bold 맵 (페이지당 1회, 전 요소 공유)
+        faux_bold_map = _build_faux_bold_map(pdf_path, page_num, page.rect.height)
+
         # 테이블 감지
         tables = page.find_tables()
         table_rects = [fitz.Rect(t.bbox) for t in tables]
@@ -1390,7 +1457,8 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
                 nodes = process_text_block(
                     block, level_map, body_size, skip_lines, table_rects, page_num,
                     base_margin=base_margin, page_width=page_width_calc,
-                    right_margin=right_margin, spacing_before=spacing_before
+                    right_margin=right_margin, spacing_before=spacing_before,
+                    faux_bold_map=faux_bold_map
                 )
                 # PDF TOC 보너스: TOC에 있는 제목은 레벨 보정
                 for node in nodes:
@@ -1403,7 +1471,8 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
             elif elem["kind"] == "table":
                 node = process_table(elem["data"], page_num, page,
                                      drawings=elem.get("drawings"),
-                                     text_blocks=text_blocks)
+                                     text_blocks=text_blocks,
+                                     faux_bold_map=faux_bold_map)
                 if node:
                     content.append(node)
                 prev_bottom_y = elem["data"].bbox[3]
