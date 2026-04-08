@@ -891,7 +891,14 @@ def _row_matches_headers(row, columns):
 
 
 def merge_cross_page_tables(content):
-    """연속 테이블의 헤더+너비 비교 → 동일 구조면 행 병합"""
+    """연속 테이블의 헤더+너비 비교 → 같은 페이지에서 분할된 테이블만 병합.
+
+    병합 조건:
+    1. 연속 table 노드 (사이에 다른 노드 없음)
+    2. 헤더 구조 동일 (_tables_match)
+    3. 같은 _page이거나 _page가 1 차이 (cross-page)
+    4. 빈 테이블(0행)은 제거
+    """
     if not content:
         return content
 
@@ -900,14 +907,28 @@ def merge_cross_page_tables(content):
     while i < len(content):
         node = content[i]
         if node.get("type") == "table":
-            # 다음 노드도 테이블이고 동일 구조면 병합
+            # 0행 테이블 스킵
+            if not node.get("rows"):
+                i += 1
+                continue
+            # 다음 노드와 병합 시도
             while i + 1 < len(content):
                 next_node = content[i + 1]
                 if next_node.get("type") != "table":
                     break
+                # 0행이면 스킵
+                if not next_node.get("rows"):
+                    i += 1
+                    continue
+                # 페이지 차이 체크 (같은 페이지 또는 1페이지 차이만)
+                cur_page = node.get("_page")
+                next_page = next_node.get("_page")
+                if cur_page is not None and next_page is not None:
+                    if abs(next_page - cur_page) > 1:
+                        break
                 if not _tables_match(node, next_node):
                     break
-                # 병합: 중복 헤더 행 스킵
+                # 병합
                 next_rows = next_node["rows"]
                 if next_rows and _row_matches_headers(next_rows[0], node["columns"]):
                     next_rows = next_rows[1:]
