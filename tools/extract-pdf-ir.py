@@ -603,6 +603,9 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             h_indent = round(spans[0]["bbox"][0] - base_margin)
             if h_indent > 5:
                 h_node["indent"] = h_indent
+            if not spacing_applied and spacing_before is not None:
+                h_node["spacingBefore"] = spacing_before
+                spacing_applied = True
             nodes.append(h_node)
             continue
 
@@ -614,6 +617,9 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             h_indent = round(spans[0]["bbox"][0] - base_margin)
             if h_indent > 5:
                 h_node["indent"] = h_indent
+            if not spacing_applied and spacing_before is not None:
+                h_node["spacingBefore"] = spacing_before
+                spacing_applied = True
             nodes.append(h_node)
             continue
 
@@ -670,8 +676,8 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
                     p_node["align"] = "center"
                 elif lx1 > content_right - 10 and lx0 > content_center:
                     p_node["align"] = "right"
-            # spacingBefore (heading 제외 — heading은 자체 spacing)
-            if not spacing_applied and spacing_before is not None and p_node.get("type") != "heading":
+            # spacingBefore (모든 요소에 적용)
+            if not spacing_applied and spacing_before is not None:
                 p_node["spacingBefore"] = spacing_before
                 spacing_applied = True
             nodes.append(p_node)
@@ -1420,6 +1426,10 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
         page_drawings = page.get_drawings()  # 페이지당 1회 캐싱
 
         for block in text_blocks:
+            # 테이블 영역 내 텍스트 블록은 메인 루프에서 제외 (prev_bottom_y 오염 방지)
+            block_rect = fitz.Rect(block["bbox"])
+            if any(tr.intersects(block_rect) for tr in table_rects):
+                continue
             page_elements.append({
                 "kind": "text", "y0": block["bbox"][1], "x0": block["bbox"][0], "data": block
             })
@@ -1452,7 +1462,7 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
                 spacing_before = None
                 if prev_bottom_y is not None:
                     gap = round(block["bbox"][1] - prev_bottom_y)
-                    if gap > body_size + 2:
+                    if gap > 0:
                         spacing_before = min(gap, 100)
                 nodes = process_text_block(
                     block, level_map, body_size, skip_lines, table_rects, page_num,
