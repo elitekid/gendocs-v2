@@ -96,6 +96,41 @@ def _calculate_line_spacing(doc, skip_pages, body_size):
     return multiple if 0.8 <= multiple <= 3.0 else None
 
 
+def _extract_table_grid(table, page_drawings):
+    """t.cols/t.rows가 없을 때 drawings 세로선/가로선에서 컬럼·행 경계 추출.
+
+    Returns (col_xs, row_ys) — 정렬된 x/y 좌표 리스트.
+    col_xs: n+1개 (n컬럼), row_ys: m+1개 (m행).
+    추출 실패 시 (None, None).
+    """
+    trect = fitz.Rect(table.bbox)
+    vertical_xs = set()
+    horizontal_ys = set()
+
+    for d in page_drawings:
+        drect = fitz.Rect(d.get("rect", (0, 0, 0, 0)))
+        if not trect.intersects(drect):
+            continue
+        for item in d.get("items", []):
+            if item[0] == "l":  # line
+                p1, p2 = item[1], item[2]
+                if abs(p1.x - p2.x) < 2:  # 세로선
+                    vertical_xs.add(round(p1.x))
+                elif abs(p1.y - p2.y) < 2:  # 가로선
+                    horizontal_ys.add(round(p1.y))
+            elif item[0] == "re":  # rect
+                r = item[1]
+                w, h = r.width, r.height
+                if w < 3 and h > 5:  # 좁고 긴 = 세로선
+                    vertical_xs.add(round(r.x0))
+                elif h < 3 and w > 5:  # 낮고 넓은 = 가로선
+                    horizontal_ys.add(round(r.y0))
+
+    col_xs = sorted(vertical_xs) if len(vertical_xs) >= 2 else None
+    row_ys = sorted(horizontal_ys) if len(horizontal_ys) >= 2 else None
+    return col_xs, row_ys
+
+
 def _find_spans_in_rect(text_blocks, rect):
     """캐싱된 text_blocks에서 rect 내부 span 반환"""
     result = []
@@ -454,11 +489,29 @@ def process_table(table, page_num, page=None, drawings=None, text_blocks=None):
 
     col_count = len(valid_headers)
 
-    # 컬럼별 실제 너비 (테이블 cols 속성에서)
+    # 컬럼/행 경계 추출: t.cols → drawings fallback → 균등 분배
+    grid_cols = None
+    grid_rows = None
+    if hasattr(table, 'cols') and table.cols and isinstance(table.cols[0], (int, float)):
+        grid_cols = list(table.cols)
+    if hasattr(table, 'rows') and table.rows and isinstance(table.rows[0], (int, float)):
+        grid_rows = list(table.rows)
+
+    # drawings fallback (t.cols가 없거나 숫자가 아닐 때)
+    if grid_cols is None and drawings:
+        dc, dr = _extract_table_grid(table, drawings)
+        if dc and len(dc) >= col_count + 1:
+            grid_cols = dc
+        elif dc and len(dc) >= 2:
+            grid_cols = dc
+        if dr and len(dr) >= 2:
+            grid_rows = dr
+
+    # 컬럼 너비 계산
     col_widths = []
-    if hasattr(table, 'cols') and table.cols:
-        for j in range(min(col_count, len(table.cols) - 1)):
-            w = round(table.cols[j + 1] - table.cols[j], 1)
+    if grid_cols and len(grid_cols) >= col_count + 1:
+        for j in range(col_count):
+            w = round(grid_cols[j + 1] - grid_cols[j], 1)
             col_widths.append(w)
     if len(col_widths) != col_count:
         table_width = table.bbox[2] - table.bbox[0]
@@ -522,30 +575,29 @@ def process_table(table, page_num, page=None, drawings=None, text_blocks=None):
                 table_style["headerColor"] = most_common_color
 
     # cellPadding (첫 셀 bbox 기준, 헤더 행 — 오차 가능)
-    if (blocks_to_scan and hasattr(table, 'rows') and table.rows
-            and hasattr(table, 'cols') and table.cols
-            and len(table.rows) >= 2 and len(table.cols) >= 2):
-        cell0_rect = fitz.Rect(table.cols[0], table.rows[0], table.cols[1], table.rows[1])
+    if (blocks_to_scan and grid_cols and grid_rows
+            and len(grid_cols) >= 2 and len(grid_rows) >= 2):
+        cell0_rect = fitz.Rect(grid_cols[0], grid_rows[0], grid_cols[1], grid_rows[1])
         spans_in_cell0 = _find_spans_in_rect(blocks_to_scan, cell0_rect)
         if spans_in_cell0:
             s = spans_in_cell0[0]
-            pl = round(s["bbox"][0] - table.cols[0])
-            pt_ = round(s["bbox"][1] - table.rows[0])
+            pl = round(s["bbox"][0] - grid_cols[0])
+            pt_ = round(s["bbox"][1] - grid_rows[0])
             table_style["cellPadding"] = {
                 "left": max(pl, 0), "top": max(pt_, 0),
                 "right": max(pl, 0), "bottom": max(pt_, 0),
             }
 
-    # 셀 align (t.cols + t.rows 있을 때만)
-    if (blocks_to_scan and hasattr(table, 'cols') and table.cols and len(table.cols) > 1
-            and hasattr(table, 'rows') and table.rows and len(table.rows) > 1):
-        n_rows = len(table.rows) - 1
-        n_cols = len(table.cols) - 1
-        for row_idx in range(min(n_rows, len(ir_rows))):
-            for col_idx in range(min(n_cols, col_count)):
+    # 셀 align (grid_cols + grid_rows 있을 때만)
+    if (blocks_to_scan and grid_cols and grid_rows
+            and len(grid_cols) > 1 and len(grid_rows) > 1):
+        n_rows_a = len(grid_rows) - 1
+        n_cols_a = len(grid_cols) - 1
+        for row_idx in range(min(n_rows_a, len(ir_rows))):
+            for col_idx in range(min(n_cols_a, col_count)):
                 cell_rect = fitz.Rect(
-                    table.cols[col_idx], table.rows[row_idx],
-                    table.cols[col_idx + 1], table.rows[row_idx + 1]
+                    grid_cols[col_idx], grid_rows[row_idx],
+                    grid_cols[col_idx + 1], grid_rows[row_idx + 1]
                 )
                 cell_width = cell_rect.width
                 cell_center = (cell_rect.x0 + cell_rect.x1) / 2
@@ -560,15 +612,14 @@ def process_table(table, page_num, page=None, drawings=None, text_blocks=None):
                     ir_rows[row_idx][col_idx]["align"] = "right"
 
     # cellBg (drawings에서)
-    if (drawings and hasattr(table, 'cols') and table.cols
-            and hasattr(table, 'rows') and table.rows):
-        n_rows_bg = len(table.rows) - 1
-        n_cols_bg = len(table.cols) - 1
+    if (drawings and grid_cols and grid_rows):
+        n_rows_bg = len(grid_rows) - 1
+        n_cols_bg = len(grid_cols) - 1
         for row_idx in range(min(n_rows_bg, len(ir_rows))):
             for col_idx in range(min(n_cols_bg, col_count)):
                 cell_rect = fitz.Rect(
-                    table.cols[col_idx], table.rows[row_idx],
-                    table.cols[col_idx + 1], table.rows[row_idx + 1]
+                    grid_cols[col_idx], grid_rows[row_idx],
+                    grid_cols[col_idx + 1], grid_rows[row_idx + 1]
                 )
                 cell_area = cell_rect.width * cell_rect.height
                 if cell_area <= 0:
