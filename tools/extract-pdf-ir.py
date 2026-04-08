@@ -1548,7 +1548,7 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
     page_width = round(pg.rect.width, 1)
     page_height = round(pg.rect.height, 1)
 
-    # 여백: 본문 페이지 텍스트 블록의 min/max 좌표에서 추정
+    # 여백: 모든 본문 페이지에서 텍스트/테이블의 min/max 좌표로 추정
     min_x, max_x = page_width, 0
     min_y, max_y = page_height, 0
     for i in range(len(doc)):
@@ -1563,8 +1563,11 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
             if bx1 > max_x: max_x = bx1
             if by0 < min_y: min_y = by0
             if by1 > max_y: max_y = by1
-        if i >= first_content_page + 4:
-            break  # 5페이지면 충분
+        for t in p.find_tables().tables:
+            if t.bbox[0] < min_x: min_x = t.bbox[0]
+            if t.bbox[2] > max_x: max_x = t.bbox[2]
+            if t.bbox[1] < min_y: min_y = t.bbox[1]
+            if t.bbox[3] > max_y: max_y = t.bbox[3]
 
     margins = {
         "left": round(min_x),
