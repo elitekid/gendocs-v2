@@ -982,9 +982,21 @@ def merge_mono_lines(nodes):
                 code_ys = []
                 code_page = None
                 code_style = None
+            # continuation 감지: 줄 간격이 정상의 60% 미만이면 이전 줄에 합침
+            node_y = node.get("_y")
+            if (code_lines and code_ys and node_y is not None
+                    and len(code_ys) >= 2):
+                last_gap = code_ys[-1] - code_ys[-2]
+                cur_gap = node_y - code_ys[-1]
+                if last_gap > 0 and cur_gap < last_gap * 0.6:
+                    # continuation: 이전 줄에 합침 (줄바꿈 없이)
+                    code_lines[-1] += node["_mono_line"]
+                    # y는 업데이트 (마지막 줄 위치 추적용)
+                    code_ys[-1] = node_y
+                    continue
             code_lines.append(node["_mono_line"])
-            if node.get("_y") is not None:
-                code_ys.append(node["_y"])
+            if node_y is not None:
+                code_ys.append(node_y)
             if code_page is None:
                 code_page = node.get("_page")
             if code_style is None:
