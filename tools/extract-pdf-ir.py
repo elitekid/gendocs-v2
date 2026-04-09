@@ -630,9 +630,14 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
         if all(_is_mono_span(s) for s in spans):
             # x좌표를 pt indent로 저장 (DOCX에서 paragraph indent로 적용)
             mono_x = round(spans[0]["bbox"][0] - base_margin, 1)
-            nodes.append({"_mono_line": line_text, "_mono_style": _span_style(spans[0], faux_bold_map),
-                          "_page": page_num, "_y": spans[0]["bbox"][1],
-                          "_indent": max(0, mono_x)})
+            mono_node = {"_mono_line": line_text, "_mono_style": _span_style(spans[0], faux_bold_map),
+                        "_page": page_num, "_y": spans[0]["bbox"][1],
+                        "_indent": max(0, mono_x)}
+            # spacingBefore (코드블록 첫 줄용)
+            if not spacing_applied and spacing_before is not None:
+                mono_node["spacingBefore"] = spacing_before
+                spacing_applied = True
+            nodes.append(mono_node)
             continue
 
         # callout 감지
@@ -942,10 +947,13 @@ def merge_mono_lines(nodes):
     code_indents = []
     code_page = None
     code_style = None
+    code_spacing_before = None
 
     def _flush():
         cb = {"type": "codeBlock", "lines": code_lines,
               "language": "", "_page": code_page}
+        if code_spacing_before is not None:
+            cb["spacingBefore"] = code_spacing_before
         if code_style:
             cb["style"] = dict(code_style)
         # 줄 간격 계산 (y좌표 차이의 중앙값)
@@ -974,6 +982,7 @@ def merge_mono_lines(nodes):
                 code_indents = []
                 code_page = None
                 code_style = None
+                code_spacing_before = None
             # continuation 감지: 줄 간격이 정상의 60% 미만이면 이전 줄에 합침
             node_y = node.get("_y")
             if (code_lines and code_ys and node_y is not None
@@ -992,6 +1001,8 @@ def merge_mono_lines(nodes):
                 code_ys.append(node_y)
             if code_page is None:
                 code_page = node.get("_page")
+            if code_spacing_before is None and node.get("spacingBefore") is not None:
+                code_spacing_before = node["spacingBefore"]
             if code_style is None:
                 code_style = node.get("_mono_style")
         else:
@@ -1002,6 +1013,7 @@ def merge_mono_lines(nodes):
                 code_indents = []
                 code_page = None
                 code_style = None
+                code_spacing_before = None
             merged.append(node)
 
     if code_lines:
