@@ -1601,7 +1601,27 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
         "bottom": round(page_height - max_y),
     }
 
-    doc.close()
+    # 페이지별 margin (section별 동적 margin용)
+    page_margins = {}
+    doc2 = fitz.open(pdf_path)
+    for i in range(len(doc2)):
+        if i in skip_pages:
+            continue
+        p = doc2[i]
+        p_min_y = page_height
+        p_max_y = 0
+        for b in p.get_text("dict")["blocks"]:
+            if b["bbox"][1] < p_min_y: p_min_y = b["bbox"][1]
+            if b["bbox"][3] > p_max_y: p_max_y = b["bbox"][3]
+        for t in p.find_tables().tables:
+            if t.bbox[1] < p_min_y: p_min_y = t.bbox[1]
+            if t.bbox[3] > p_max_y: p_max_y = t.bbox[3]
+        if p_max_y > p_min_y:
+            page_margins[i] = {
+                "top": round(p_min_y, 1),
+                "bottom": round(page_height - p_max_y, 1),
+            }
+    doc2.close()
 
     meta = {
         "title": meta_title,
@@ -1609,6 +1629,7 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
         "pageWidth": page_width,
         "pageHeight": page_height,
         "margins": margins,
+        "pageMargins": page_margins,
     }
     if line_spacing is not None:
         meta["lineSpacing"] = line_spacing
