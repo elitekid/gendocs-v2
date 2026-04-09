@@ -628,24 +628,11 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
 
         # 코드블록 감지 (flags bit3 모노스페이스)
         if all(_is_mono_span(s) for s in spans):
-            # x좌표 기반 indent → 공백 정규화
-            mono_x = spans[0]["bbox"][0]
-            mono_indent = mono_x - base_margin
-            # 텍스트 앞 기존 공백 수
-            existing_spaces = len(line_text) - len(line_text.lstrip(' '))
-            # 기존 공백의 폭 추정 (모노 폰트: 1 space ≈ fontSize * 0.6)
-            mono_size = spans[0]["size"]
-            space_width = mono_size * 0.6
-            existing_indent = existing_spaces * space_width
-            # 추가 indent 필요분
-            extra_indent = mono_indent - existing_indent
-            if extra_indent > space_width * 0.5:
-                extra_spaces = round(extra_indent / space_width)
-                mono_text = " " * extra_spaces + line_text
-            else:
-                mono_text = line_text
-            nodes.append({"_mono_line": mono_text, "_mono_style": _span_style(spans[0], faux_bold_map),
-                          "_page": page_num, "_y": spans[0]["bbox"][1]})
+            # x좌표를 pt indent로 저장 (DOCX에서 paragraph indent로 적용)
+            mono_x = round(spans[0]["bbox"][0] - base_margin, 1)
+            nodes.append({"_mono_line": line_text, "_mono_style": _span_style(spans[0], faux_bold_map),
+                          "_page": page_num, "_y": spans[0]["bbox"][1],
+                          "_indent": max(0, mono_x)})
             continue
 
         # callout 감지
@@ -952,6 +939,7 @@ def merge_mono_lines(nodes):
     merged = []
     code_lines = []
     code_ys = []
+    code_indents = []
     code_page = None
     code_style = None
 
@@ -970,6 +958,9 @@ def merge_mono_lines(nodes):
                 if "style" not in cb:
                     cb["style"] = {}
                 cb["style"]["lineSpacing"] = median_gap
+        # 줄별 indent
+        if code_indents:
+            cb["lineIndents"] = code_indents
         merged.append(cb)
 
     for node in nodes:
@@ -980,6 +971,7 @@ def merge_mono_lines(nodes):
                 _flush()
                 code_lines = []
                 code_ys = []
+                code_indents = []
                 code_page = None
                 code_style = None
             # continuation 감지: 줄 간격이 정상의 60% 미만이면 이전 줄에 합침
@@ -995,6 +987,7 @@ def merge_mono_lines(nodes):
                     code_ys[-1] = node_y
                     continue
             code_lines.append(node["_mono_line"])
+            code_indents.append(node.get("_indent", 0))
             if node_y is not None:
                 code_ys.append(node_y)
             if code_page is None:
@@ -1006,6 +999,7 @@ def merge_mono_lines(nodes):
                 _flush()
                 code_lines = []
                 code_ys = []
+                code_indents = []
                 code_page = None
                 code_style = None
             merged.append(node)
