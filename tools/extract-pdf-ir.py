@@ -1063,6 +1063,7 @@ def detect_json_blocks(nodes):
     """
     result = []
     json_lines = []
+    json_indents = []
     brace_depth = 0
     json_page = None
     json_style = None
@@ -1076,21 +1077,25 @@ def detect_json_blocks(nodes):
 
     def _extract_lines(node):
         if node.get("type") == "codeBlock":
-            return node.get("lines", [])
+            return node.get("lines", []), node.get("lineIndents", [0]*len(node.get("lines",[])))
         if node.get("type") == "paragraph":
             text = "".join(r["text"] for r in node.get("runs", [])).strip()
-            return [text] if text else []
-        return []
+            indent = node.get("indent", 0)
+            return ([text], [indent]) if text else ([], [])
+        return [], []
 
     def _flush():
-        nonlocal json_lines, brace_depth, json_page, json_style
+        nonlocal json_lines, json_indents, brace_depth, json_page, json_style
         if json_lines:
             cb = {"type": "codeBlock", "lines": json_lines,
                   "language": "json", "_page": json_page}
             if json_style:
                 cb["style"] = json_style
+            if json_indents:
+                cb["lineIndents"] = json_indents
             result.append(cb)
         json_lines = []
+        json_indents = []
         brace_depth = 0
         json_page = None
         json_style = None
@@ -1105,8 +1110,9 @@ def detect_json_blocks(nodes):
                 _flush()  # 페이지 바뀌면 강제 flush
                 # 새 JSON 블록 시작
                 json_page = node_page
-            lines = _extract_lines(node)
+            lines, indents = _extract_lines(node)
             json_lines.extend(lines)
+            json_indents.extend(indents)
             if json_style is None and node.get("style"):
                 json_style = node["style"]
             opens = text.count("{") + text.count("[")
@@ -1120,8 +1126,9 @@ def detect_json_blocks(nodes):
         if text is not None:
             first_line = text.split("\n")[0].strip() if text else ""
             if first_line.startswith("{") or first_line.startswith("["):
-                lines = _extract_lines(node)
+                lines, indents = _extract_lines(node)
                 json_lines.extend(lines)
+                json_indents.extend(indents)
                 json_page = node.get("_page")
                 # 스타일: codeBlock이면 style, paragraph이면 첫 run에서 추출
                 if node.get("style"):
