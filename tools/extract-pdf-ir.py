@@ -974,6 +974,14 @@ def merge_mono_lines(nodes):
 
     for node in nodes:
         if "_mono_line" in node:
+            # 페이지가 바뀌면 이전 코드블록 flush (페이지별 section 지원)
+            node_page = node.get("_page")
+            if code_lines and node_page is not None and code_page is not None and node_page != code_page:
+                _flush()
+                code_lines = []
+                code_ys = []
+                code_page = None
+                code_style = None
             code_lines.append(node["_mono_line"])
             if node.get("_y") is not None:
                 code_ys.append(node["_y"])
@@ -1084,8 +1092,13 @@ def detect_json_blocks(nodes):
     for node in nodes:
         text = _extract_text(node)
 
-        # JSON 진행 중 → 모든 텍스트 노드를 흡수
+        # JSON 진행 중 → 모든 텍스트 노드를 흡수 (페이지 경계에서 분리)
         if brace_depth > 0 and text is not None:
+            node_page = node.get("_page")
+            if node_page is not None and json_page is not None and node_page != json_page:
+                _flush()  # 페이지 바뀌면 강제 flush
+                # 새 JSON 블록 시작
+                json_page = node_page
             lines = _extract_lines(node)
             json_lines.extend(lines)
             if json_style is None and node.get("style"):
@@ -1536,7 +1549,7 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
     content = merge_mono_lines(content)          # 모노 줄 → codeBlock
     content = merge_list_items(content)           # listItem → list
     content = detect_json_blocks(content)         # JSON 패턴 → codeBlock
-    content = merge_cross_page_tables(content)    # 테이블 cross-page 병합
+    # content = merge_cross_page_tables(content)  # 비활성화: 페이지별 section 방식에서는 불필요
     content = promote_bold_labels(content)        # bold 라벨 → H4
     # pageBreak는 IR transformer가 처리 (PDF 파서에서 중복 삽입 방지)
     content = strip_internal_meta(content)        # _page 제거
