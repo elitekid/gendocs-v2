@@ -624,6 +624,7 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
     """텍스트 블록 → IR 노드들"""
     nodes = []
     spacing_applied = False
+    prev_line_bottom = None  # 블록 내 이전 줄의 y1 (줄별 spacingBefore 계산용)
 
     # 블록 내 유효 라인 수 (align 판정: 단일 라인만)
     valid_lines = [l for l in block.get("lines", [])
@@ -680,7 +681,11 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
                 h_node["indent"] = h_indent
             if not spacing_applied and spacing_before is not None:
                 h_node["spacingBefore"] = spacing_before
-                spacing_applied = True
+            elif spacing_applied and prev_line_bottom is not None:
+                lg = round(line["bbox"][1] - prev_line_bottom, 1)
+                if lg > 0: h_node["spacingBefore"] = lg
+            spacing_applied = True
+            prev_line_bottom = line["bbox"][3]
             nodes.append(h_node)
             continue
 
@@ -700,7 +705,11 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
                     h_node["align"] = "center"
             if not spacing_applied and spacing_before is not None:
                 h_node["spacingBefore"] = spacing_before
-                spacing_applied = True
+            elif spacing_applied and prev_line_bottom is not None:
+                lg = round(line["bbox"][1] - prev_line_bottom, 1)
+                if lg > 0: h_node["spacingBefore"] = lg
+            spacing_applied = True
+            prev_line_bottom = line["bbox"][3]
             nodes.append(h_node)
             continue
 
@@ -723,7 +732,11 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             # spacingBefore (코드블록 첫 줄용)
             if not spacing_applied and spacing_before is not None:
                 mono_node["spacingBefore"] = spacing_before
-                spacing_applied = True
+            elif spacing_applied and prev_line_bottom is not None:
+                lg = round(line["bbox"][1] - prev_line_bottom, 1)
+                if lg > 0: mono_node["spacingBefore"] = lg
+            spacing_applied = True
+            prev_line_bottom = line["bbox"][3]
             nodes.append(mono_node)
             continue
 
@@ -788,10 +801,14 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             # spacingBefore: block 첫 줄은 block 간격, 이후 줄은 block 내 paragraph break 감지
             if not spacing_applied and spacing_before is not None:
                 p_node["spacingBefore"] = spacing_before
-            # block 내부 paragraph break: lineSpacing이 이미 줄 간격을 커버하므로
-            # spacingBefore 추가는 총 높이를 증가시켜 페이지 수 불일치 유발.
-            # paragraph break 간격은 lineSpacing으로 간접 반영됨.
-                spacing_applied = True
+            elif spacing_applied and prev_line_bottom is not None:
+                # paragraph break만: gap이 body_size 이상이면 spacingBefore 추가
+                # (연속 줄은 lineSpacing이 커버, paragraph break만 추가 간격 필요)
+                line_gap = round(line["bbox"][1] - prev_line_bottom, 1)
+                if line_gap >= body_size:
+                    p_node["spacingBefore"] = line_gap
+            spacing_applied = True
+            prev_line_bottom = line["bbox"][3]
             nodes.append(p_node)
 
     return nodes
@@ -1966,6 +1983,7 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
         meta["header"] = hdr_ftr_info["header"]
     if hdr_ftr_info.get("footer"):
         meta["footer"] = hdr_ftr_info["footer"]
+
 
     # 페이지 border box 감지 (content 영역 테두리)
     # 여러 페이지에서 동일한 회색 border rect 있으면 pageBorder로 저장
