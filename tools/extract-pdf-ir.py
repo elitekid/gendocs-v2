@@ -84,11 +84,13 @@ def _calculate_line_spacing(doc, skip_pages, body_size):
                 continue
             if not all(round(s["size"]) == body_size for s in valid_spans):
                 continue
+            # Word 기준 line spacing 배율 = pitch / (fontSize * 1.2)
+            # Word 표준 single spacing = font size * 1.2 (120%)
+            word_standard = body_size * 1.2
             for i in range(1, len(lines)):
                 pitch = lines[i]["bbox"][1] - lines[i-1]["bbox"][1]
-                lh = lines[i]["bbox"][3] - lines[i]["bbox"][1]
-                if lh > 0 and 0 < pitch < body_size * 3:
-                    ratios.append(pitch / lh)
+                if word_standard > 0 and 0 < pitch < body_size * 3:
+                    ratios.append(pitch / word_standard)
     if not ratios:
         return None
     ratios.sort()
