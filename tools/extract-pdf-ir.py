@@ -626,10 +626,9 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
     spacing_applied = False
 
     # 블록 내 유효 라인 수 (align 판정: 단일 라인만)
-    line_count = sum(
-        1 for l in block.get("lines", [])
-        if any(s["text"].strip() for s in l.get("spans", []))
-    )
+    valid_lines = [l for l in block.get("lines", [])
+                   if any(s["text"].strip() for s in l.get("spans", []))]
+    line_count = len(valid_lines)
 
     for line in block.get("lines", []):
         spans = line.get("spans", [])
@@ -786,9 +785,12 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
                 # dot 끝 위치 = line의 x_right (PDF 실측)
                 p_node["_dotLeaderEnd"] = round(line["bbox"][2], 1)
                 p_node["_marginLeft"] = round(base_margin, 1)
-            # spacingBefore (모든 요소에 적용)
+            # spacingBefore: block 첫 줄은 block 간격, 이후 줄은 block 내 paragraph break 감지
             if not spacing_applied and spacing_before is not None:
                 p_node["spacingBefore"] = spacing_before
+            # block 내부 paragraph break: lineSpacing이 이미 줄 간격을 커버하므로
+            # spacingBefore 추가는 총 높이를 증가시켜 페이지 수 불일치 유발.
+            # paragraph break 간격은 lineSpacing으로 간접 반영됨.
                 spacing_applied = True
             nodes.append(p_node)
 
@@ -1924,7 +1926,7 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
             if t.bbox[3] > max_y: max_y = t.bbox[3]
 
     margins = {
-        "left": round(base_margin),  # body text 기준 (header/footer 제외)
+        "left": round(base_margin),
         "right": round(page_width - max_x),
         "top": round(min_y),
         "bottom": round(page_height - max_y),
