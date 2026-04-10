@@ -1964,6 +1964,27 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
         meta["header"] = hdr_ftr_info["header"]
     if hdr_ftr_info.get("footer"):
         meta["footer"] = hdr_ftr_info["footer"]
+
+    # 페이지 border box 감지 (content 영역 테두리)
+    # 여러 페이지에서 동일한 회색 border rect 있으면 pageBorder로 저장
+    if page_count >= 3:
+        border_rects = Counter()
+        for pi in range(1, min(10, page_count)):  # p2~10 샘플
+            pg = doc[pi]
+            for d in pg.get_drawings():
+                f = d.get("fill")
+                if not f or f == (1.0, 1.0, 1.0): continue
+                for item in d.get("items", []):
+                    if item[0] == "re":
+                        r = item[1]
+                        if r.width > page_width * 0.5 and r.height > page_height * 0.5:
+                            # 큰 rect = border box 후보
+                            color_hex = "%02X%02X%02X" % (int(f[0]*255), int(f[1]*255), int(f[2]*255))
+                            border_rects[color_hex] += 1
+        if border_rects:
+            dominant_color = border_rects.most_common(1)[0]
+            if dominant_color[1] >= 3:  # 3+ 페이지에서 반복
+                meta["pageBorder"] = {"color": dominant_color[0]}
     if line_spacing is not None:
         meta["lineSpacing"] = line_spacing
 
