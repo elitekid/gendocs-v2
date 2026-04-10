@@ -242,12 +242,24 @@ def identify_headers(doc, skip_pages=None):
 
 
 def collect_skip_lines(doc):
-    """50%+ 반복 줄 수집 (헤더/푸터 필터링)"""
+    """50%+ 반복 줄 수집 (헤더/푸터 필터링) + header/footer 레이아웃 추출.
+
+    Returns: (skip_lines_set, header_footer_info)
+      skip_lines_set: set of repeated text strings
+      header_footer_info: {"header": [...], "footer": [...]}
+        각 항목: {"text": str, "align": "left"|"center"|"right"}
+    """
     page_count = len(doc)
     if page_count < 3:
-        return set()
+        return set(), {"header": [], "footer": []}
 
     line_counts = Counter()
+    # header/footer 위치+텍스트 수집
+    hdr_items = Counter()  # (text, align) → count
+    ftr_items = Counter()
+    page_width = doc[0].rect.width
+    page_height = doc[0].rect.height
+
     for page in doc:
         seen_on_page = set()
         for block in page.get_text("dict")["blocks"]:
@@ -255,12 +267,72 @@ def collect_skip_lines(doc):
                 continue
             for line in block.get("lines", []):
                 text = "".join(s["text"] for s in line.get("spans", [])).strip()
-                if text and text not in seen_on_page:
+                if not text:
+                    continue
+                if text not in seen_on_page:
                     seen_on_page.add(text)
                     line_counts[text] += 1
 
+                y = line["bbox"][1]
+                x0 = line["bbox"][0]
+                x1 = line["bbox"][2]
+                cx = (x0 + x1) / 2
+                # 정렬 판정
+                if abs(cx - page_width / 2) < page_width * 0.1:
+                    align = "center"
+                elif x1 > page_width * 0.8:
+                    align = "right"
+                else:
+                    align = "left"
+
+                fs = line["spans"][0].get("size", 10)
+                if fs <= 9:  # 작은 폰트만 header/footer 후보
+                    if y < page_height * 0.08:
+                        hdr_items[(text, align)] += 1
+                    elif y > page_height * 0.85:
+                        ftr_items[(text, align)] += 1
+
     threshold = page_count * 0.5
-    return {text for text, count in line_counts.items() if count >= threshold}
+    skip_set = {text for text, count in line_counts.items() if count >= threshold}
+
+    # header/footer: 50%+ 페이지에서 반복되는 항목만
+    # "Page N" 같은 가변 텍스트는 패턴으로 처리
+    header = []
+    footer = []
+    for (text, align), cnt in hdr_items.most_common():
+        if cnt >= threshold:
+            header.append({"text": text, "align": align})
+    # 가변 페이지 번호 패턴 집계: "Page N" → align별 합산
+    page_num_aligns = Counter()
+    for (text, align), cnt in ftr_items.items():
+        if re.match(r"^Page \d+$", text):
+            page_num_aligns[align] += cnt
+    for align, cnt in page_num_aligns.items():
+        if cnt >= threshold:
+            footer.append({"text": "__PAGE__", "align": align})
+            # skip_set에 모든 "Page N" 추가
+            for i in range(1, page_count + 1):
+                skip_set.add("Page %d" % i)
+
+    for (text, align), cnt in ftr_items.most_common():
+        if cnt >= threshold and not re.match(r"^Page \d+$", text):
+            footer.append({"text": text, "align": align})
+
+    # 중복 제거 (같은 align에 하나만)
+    seen_aligns_h = set()
+    header_dedup = []
+    for h in header:
+        if h["align"] not in seen_aligns_h:
+            header_dedup.append(h)
+            seen_aligns_h.add(h["align"])
+    seen_aligns_f = set()
+    footer_dedup = []
+    for f in footer:
+        if f["align"] not in seen_aligns_f:
+            footer_dedup.append(f)
+            seen_aligns_f.add(f["align"])
+
+    return skip_set, {"header": header_dedup, "footer": footer_dedup}
 
 
 # ============================================================
@@ -1603,7 +1675,7 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
     else:
         body_size, level_map = identify_headers(doc, skip_pages)
 
-    skip_lines = collect_skip_lines(doc)
+    skip_lines, hdr_ftr_info = collect_skip_lines(doc)
     base_margin, right_margin, page_width_calc = _calculate_margins(doc, skip_pages, body_size)
     line_spacing = _calculate_line_spacing(doc, skip_pages, body_size)
 
@@ -1646,7 +1718,11 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
 
         # 같은 y좌표의 line을 합치기 (다른 block이지만 같은 줄인 경우)
         # 예: "This specification..." (block A) + "[RFC5234]" (block B) → 같은 y → 하나의 line
-        all_lines = []  # (y, x, line_dict, block_bbox)
+        # header/footer 영역(상단 60pt, 하단 60pt)은 합치지 않음 (skip_lines 매칭 보존)
+        page_h = page.rect.height
+        hdr_limit = 60  # header 영역 상한
+        ftr_limit = page_h - 60  # footer 영역 하한
+        all_lines = []  # (y, x, line_dict, block_bbox, is_hdrftr)
         for block in text_blocks:
             block_rect = fitz.Rect(block["bbox"])
             if any(tr.intersects(block_rect) for tr in table_rects):
@@ -1654,16 +1730,17 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
             for line in block.get("lines", []):
                 y = round(line["bbox"][1], 1)
                 x = line["bbox"][0]
-                all_lines.append((y, x, line, block["bbox"]))
+                is_hf = (y < hdr_limit or y > ftr_limit)
+                all_lines.append((y, x, line, block["bbox"], is_hf))
 
         # y좌표 기준 그룹핑 (2pt 이내면 같은 줄)
         all_lines.sort(key=lambda t: (t[0], t[1]))
         merged_blocks = []
         current_y = None
         current_lines = []
-        for y, x, line, bbx in all_lines:
-            if current_y is not None and abs(y - current_y) < 2:
-                # 같은 줄 — spans 합침
+        for y, x, line, bbx, is_hf in all_lines:
+            if current_y is not None and abs(y - current_y) < 2 and not is_hf:
+                # 같은 줄 — spans 합침 (header/footer는 합치지 않음)
                 current_lines[-1]["spans"].extend(line.get("spans", []))
                 # bbox 확장
                 cur_bb = current_lines[-1]["bbox"]
@@ -1880,6 +1957,10 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
         "margins": margins,
         "pageMargins": page_margins,
     }
+    if hdr_ftr_info.get("header"):
+        meta["header"] = hdr_ftr_info["header"]
+    if hdr_ftr_info.get("footer"):
+        meta["footer"] = hdr_ftr_info["footer"]
     if line_spacing is not None:
         meta["lineSpacing"] = line_spacing
 
