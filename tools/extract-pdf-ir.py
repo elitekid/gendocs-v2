@@ -640,8 +640,9 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
         if not line_text_stripped:
             continue
 
-        # 스킵 줄 (헤더/푸터)
-        if line_text_stripped in skip_lines:
+        # 스킵 줄 (헤더/푸터) — body_size 이하 폰트만 스킵 (큰 폰트 제목은 보존)
+        primary_size = round(spans[0]["size"])
+        if line_text_stripped in skip_lines and primary_size <= body_size:
             continue
 
         # 페이지 번호 패턴 스킵
