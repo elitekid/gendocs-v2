@@ -1921,7 +1921,7 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
             if t.bbox[3] > max_y: max_y = t.bbox[3]
 
     margins = {
-        "left": round(min_x),
+        "left": round(base_margin),  # body text 기준 (header/footer 제외)
         "right": round(page_width - max_x),
         "top": round(min_y),
         "bottom": round(page_height - max_y),
