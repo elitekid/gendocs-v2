@@ -1644,11 +1644,72 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
         text_blocks = [b for b in page_dict["blocks"] if b["type"] == 0]
         page_drawings = page.get_drawings()  # 페이지당 1회 캐싱
 
+        # 같은 y좌표의 line을 합치기 (다른 block이지만 같은 줄인 경우)
+        # 예: "This specification..." (block A) + "[RFC5234]" (block B) → 같은 y → 하나의 line
+        all_lines = []  # (y, x, line_dict, block_bbox)
         for block in text_blocks:
-            # 테이블 영역 내 텍스트 블록은 메인 루프에서 제외 (prev_bottom_y 오염 방지)
             block_rect = fitz.Rect(block["bbox"])
             if any(tr.intersects(block_rect) for tr in table_rects):
                 continue
+            for line in block.get("lines", []):
+                y = round(line["bbox"][1], 1)
+                x = line["bbox"][0]
+                all_lines.append((y, x, line, block["bbox"]))
+
+        # y좌표 기준 그룹핑 (2pt 이내면 같은 줄)
+        all_lines.sort(key=lambda t: (t[0], t[1]))
+        merged_blocks = []
+        current_y = None
+        current_lines = []
+        for y, x, line, bbx in all_lines:
+            if current_y is not None and abs(y - current_y) < 2:
+                # 같은 줄 — spans 합침
+                current_lines[-1]["spans"].extend(line.get("spans", []))
+                # bbox 확장
+                cur_bb = current_lines[-1]["bbox"]
+                ln_bb = line["bbox"]
+                current_lines[-1]["bbox"] = [
+                    min(cur_bb[0], ln_bb[0]), min(cur_bb[1], ln_bb[1]),
+                    max(cur_bb[2], ln_bb[2]), max(cur_bb[3], ln_bb[3])
+                ]
+            else:
+                # 새 줄
+                merged_line = {
+                    "spans": list(line.get("spans", [])),
+                    "bbox": list(line["bbox"]),
+                }
+                current_lines.append(merged_line)
+                current_y = y
+
+        # 합친 line들을 block으로 재구성 (연속 y → 같은 block)
+        if current_lines:
+            block_lines = []
+            prev_y = None
+            for ml in current_lines:
+                y = ml["bbox"][1]
+                # 줄 간격이 크면 (50pt+) 새 block
+                if prev_y is not None and y - prev_y > 50:
+                    if block_lines:
+                        bb = [
+                            min(l["bbox"][0] for l in block_lines),
+                            min(l["bbox"][1] for l in block_lines),
+                            max(l["bbox"][2] for l in block_lines),
+                            max(l["bbox"][3] for l in block_lines),
+                        ]
+                        merged_blocks.append({"type": 0, "lines": block_lines, "bbox": bb})
+                    block_lines = []
+                block_lines.append(ml)
+                prev_y = y
+            if block_lines:
+                bb = [
+                    min(l["bbox"][0] for l in block_lines),
+                    min(l["bbox"][1] for l in block_lines),
+                    max(l["bbox"][2] for l in block_lines),
+                    max(l["bbox"][3] for l in block_lines),
+                ]
+                merged_blocks.append({"type": 0, "lines": block_lines, "bbox": bb})
+
+        for block in merged_blocks:
             page_elements.append({
                 "kind": "text", "y0": block["bbox"][1], "x0": block["bbox"][0], "data": block
             })
