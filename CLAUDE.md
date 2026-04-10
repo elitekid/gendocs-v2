@@ -15,6 +15,7 @@ gendocs는 **마크다운(MD)을 원본으로, 모든 형태의 비즈니스 문
 4. **검증 시 최종 산출물 실제 확인 필수**: 생성된 DOCX/XLSX 등을 검증할 때 XML 데이터만 보고 판단하지 않는다. `extract-docx.py`나 `validate-docx.py` 등 도구로 실제 내용을 확인하거나, 압축 해제하여 직접 확인한다. 확인하지 않은 것을 확인했다고 답하지 않는다.
 5. **거짓/추측 답변 금지**: 확인하지 않은 사실을 확인했다고 답하지 않는다. 모르면 모른다고 말한다. 데이터로 검증되지 않은 것을 "맞다", "일치한다", "정상이다"로 판단하지 않는다.
 6. **PDF→DOCX 페이지 일치 검증 필수**: 변환된 DOCX의 각 페이지 시작과 끝에는 원본 PDF와 동일한 요소가 들어가야 한다. Word COM→PDF 렌더링 후 페이지별 첫/마지막 요소를 원본과 비교 검증한다. 코드 수정 시 반드시 영향도를 체크하여 다른 페이지가 밀리지 않는지 확인한다.
+7. **PDF→DOCX 하위 호환성 필수**: `extract-pdf-ir.py` 또는 `plain-docx.js` 수정 후 커밋 전에 반드시 `node tests/baseline/pdf-hanabank/check-regression.js` 실행. 기존에 잘 되던 하나은행 문서의 페이지 수·시작/끝 텍스트가 바뀌면 regression — 수정을 재검토하거나 baseline을 의도적으로 업데이트해야 한다.
 
 ---
 
@@ -57,6 +58,9 @@ npm test
 
 # 스모크 테스트 (examples 변환 확인)
 npm run test:smoke
+
+# PDF→DOCX 하위 호환성 테스트 (extract-pdf-ir.py 또는 plain-docx.js 수정 후 반드시 실행)
+node tests/baseline/pdf-hanabank/check-regression.js
 
 # 품질 점수
 node tools/score-docx.js doc-configs/문서.json --save

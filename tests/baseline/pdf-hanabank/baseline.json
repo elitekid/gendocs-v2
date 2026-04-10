@@ -1,0 +1,131 @@
+{
+  "source": "hanabank_qr_flow_v1.2.pdf",
+  "pages": 25,
+  "page_data": [
+    {
+      "first": "하나은행 기업QR 결제",
+      "last": "개발요건정의서 v1.2",
+      "count": 2
+    },
+    {
+      "first": "내용",
+      "last": "3-3.전체 에러코드 목록 .....",
+      "count": 12
+    },
+    {
+      "first": "1. Token 등록/해지",
+      "last": "1. Token 등록/해지",
+      "count": 1
+    },
+    {
+      "first": "1-1.API Token 등록 요청 ",
+      "last": "N",
+      "count": 46
+    },
+    {
+      "first": "trxInfo.tokenAction",
+      "last": "N",
+      "count": 33
+    },
+    {
+      "first": "msgResponse.response",
+      "last": "}",
+      "count": 15
+    },
+    {
+      "first": "2. Dynamic MPM 결제",
+      "last": "2. Dynamic MPM 결제",
+      "count": 1
+    },
+    {
+      "first": "2-1.API 2.가맹점정보조회요청 ",
+      "last": "Example",
+      "count": 41
+    },
+    {
+      "first": "{",
+      "last": "Y",
+      "count": 50
+    },
+    {
+      "first": "msgResponse.response",
+      "last": "{",
+      "count": 24
+    },
+    {
+      "first": "\"merchantName\": \"QB ",
+      "last": "}",
+      "count": 14
+    },
+    {
+      "first": "2-2.API 5.QR 생성요청 / ",
+      "last": "Example",
+      "count": 47
+    },
+    {
+      "first": "{",
+      "last": "{",
+      "count": 37
+    },
+    {
+      "first": "\" trxInfo\": {\"transa",
+      "last": "\"msgResponse\": {    ",
+      "count": 5
+    },
+    {
+      "first": "2-3.API 9.QR 결제 거래정보",
+      "last": "Example",
+      "count": 47
+    },
+    {
+      "first": "{",
+      "last": "N",
+      "count": 40
+    },
+    {
+      "first": "trxInfo.trxDt",
+      "last": "\"trxDt\": \"20250501\",",
+      "count": 54
+    },
+    {
+      "first": "\"trxTm\": \"172808\",",
+      "last": "}",
+      "count": 12
+    },
+    {
+      "first": "2-4.API 16.승인결과전송 / ",
+      "last": "Y",
+      "count": 51
+    },
+    {
+      "first": "trxInfo.status",
+      "last": "}",
+      "count": 21
+    },
+    {
+      "first": "Response Body",
+      "last": "}",
+      "count": 22
+    },
+    {
+      "first": "3.에러코드 정의",
+      "last": "- 9000 번 대: 시스템 에러(S",
+      "count": 10
+    },
+    {
+      "first": "3-3.전체 에러코드 목록",
+      "last": "거래번호 검증 실패",
+      "count": 81
+    },
+    {
+      "first": "카테고리",
+      "last": "타임아웃 발생",
+      "count": 84
+    },
+    {
+      "first": "카테고리",
+      "last": "기타 분류되지 않은 시스템 에러",
+      "count": 12
+    }
+  ]
+}
