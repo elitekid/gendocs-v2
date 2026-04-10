@@ -562,17 +562,18 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
         if not spans:
             continue
 
-        # 줄 텍스트 조합
-        line_text = "".join(s["text"] for s in spans).strip()
-        if not line_text:
+        # 줄 텍스트 조합 (후행 공백만 제거, 선행 공백 보존 — 코드 indent용)
+        line_text = "".join(s["text"] for s in spans).rstrip()
+        line_text_stripped = line_text.strip()  # heading/pattern 매칭용
+        if not line_text_stripped:
             continue
 
         # 스킵 줄 (헤더/푸터)
-        if line_text in skip_lines:
+        if line_text_stripped in skip_lines:
             continue
 
         # 페이지 번호 패턴 스킵
-        if re.match(r'^\d+\s*/\s*\d+$', line_text) or re.match(r'^\d+$', line_text):
+        if re.match(r'^\d+\s*/\s*\d+$', line_text_stripped) or re.match(r'^\d+$', line_text_stripped):
             continue
 
         # 테이블 영역 내 스킵
@@ -592,12 +593,12 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
 
         # 1) 섹션 번호 heading — 번호 깊이가 가장 정확한 레벨 정보
         #    (bold 또는 본문보다 큰 폰트 + 짧은 줄)
-        sec_match = SECTION_NUM_PATTERN.match(line_text)
-        if sec_match and len(line_text) < 80 and (first_bold or primary_size > body_size):
+        sec_match = SECTION_NUM_PATTERN.match(line_text_stripped)
+        if sec_match and len(line_text_stripped) < 80 and (first_bold or primary_size > body_size):
             num_str = sec_match.group(1).rstrip('.')
             depth = num_str.count('.') + 1  # "0." → 1, "4.1" → 2, "4.1.2" → 3
             sec_level = min(depth + 1, 5)   # depth 1 → H2, 2 → H3, 3 → H4, max H5
-            h_node = {"type": "heading", "level": sec_level, "text": line_text,
+            h_node = {"type": "heading", "level": sec_level, "text": line_text_stripped,
                       "style": style, "_page": page_num}
             # indent
             h_indent = round(spans[0]["bbox"][0] - base_margin)
@@ -610,13 +611,19 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             continue
 
         # 2) 크기 기반 heading (본문보다 2pt+ 큰 폰트, 번호 없는 제목)
-        level = _is_heading_candidate(line_text, spans[0]["size"], body_size, level_map)
-        if level is not None and 3 <= len(line_text) <= 120:
-            h_node = {"type": "heading", "level": level, "text": line_text,
+        level = _is_heading_candidate(line_text_stripped, spans[0]["size"], body_size, level_map)
+        if level is not None and 1 <= len(line_text_stripped) <= 120:
+            h_node = {"type": "heading", "level": level, "text": line_text_stripped,
                       "style": style, "_page": page_num}
             h_indent = round(spans[0]["bbox"][0] - base_margin)
             if h_indent > 5:
                 h_node["indent"] = h_indent
+            # heading center 감지
+            if line_count == 1:
+                h_cx = (line["bbox"][0] + line["bbox"][2]) / 2
+                page_cx = (base_margin + page_width - right_margin) / 2
+                if abs(h_cx - page_cx) < 20:
+                    h_node["align"] = "center"
             if not spacing_applied and spacing_before is not None:
                 h_node["spacingBefore"] = spacing_before
                 spacing_applied = True
@@ -626,10 +633,16 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
         # 3) 불릿/리스트 감지 — PDF 원본은 dash 텍스트 그대로 유지 (paragraph + indent)
         # (listItem으로 변환하면 Word가 ● 불릿으로 바꿔서 원본과 달라짐)
 
-        # 코드블록 감지 (flags bit3 모노스페이스)
-        if all(_is_mono_span(s) for s in spans):
-            # x좌표를 pt indent로 저장 (DOCX에서 paragraph indent로 적용)
-            mono_x = round(spans[0]["bbox"][0] - base_margin, 1)
+        # 코드블록 감지 (첫 span이 모노스페이스면 코드줄 — 한글은 Gulim으로 혼합될 수 있음)
+        if _is_mono_span(spans[0]):
+            # 첫 번째 비공백 문자의 시각적 위치를 indent로 사용
+            # PDF는 선행 공백(x=margin) 또는 위치 오프셋(x>margin) 두 가지 방식을 혼용
+            span_x = spans[0]["bbox"][0]
+            font_size = spans[0].get("size", 11)
+            mono_char_w = font_size * 0.6  # 모노스페이스 반각 문자 폭 (ASCII)
+            leading_spaces = len(line_text) - len(line_text.lstrip(' '))
+            visual_x = span_x + leading_spaces * mono_char_w
+            mono_x = round(visual_x - base_margin, 1)
             mono_node = {"_mono_line": line_text, "_mono_style": _span_style(spans[0], faux_bold_map),
                         "_page": page_num, "_y": spans[0]["bbox"][1],
                         "_indent": max(0, mono_x)}
@@ -641,8 +654,8 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             continue
 
         # callout 감지
-        if re.match(r'^(참고|주의|중요|경고)\s*[:：]', line_text):
-            variant = "warning" if re.match(r'^(주의|경고)', line_text) else "info"
+        if re.match(r'^(참고|주의|중요|경고)\s*[:：]', line_text_stripped):
+            variant = "warning" if re.match(r'^(주의|경고)', line_text_stripped) else "info"
             nodes.append({"type": "callout", "variant": variant,
                           "runs": [{"text": line_text}], "style": style, "_page": page_num})
             continue
@@ -685,6 +698,19 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
                     p_node["align"] = "center"
                 elif lx1 > content_right - 10 and lx0 > content_center:
                     p_node["align"] = "right"
+            # dot leader 감지: 텍스트가 "..." 또는 "...." 으로 끝나면 TOC 스타일
+            full_text = "".join(r["text"] for r in runs)
+            dot_match = re.search(r'\.{5,}\s*(\d*)\s*$', full_text)
+            if dot_match:
+                # 점 제거, 페이지번호 보존, dot leader 마킹
+                clean_text = re.sub(r'\s*\.{3,}\s*\d*\s*$', '', full_text).rstrip()
+                page_num_text = dot_match.group(1)  # "3", "4" 등
+                p_node["runs"] = [{"text": clean_text, **{k: runs[0][k] for k in runs[0] if k != "text"}}]
+                p_node["_dotLeader"] = True
+                p_node["_dotLeaderPageNum"] = page_num_text
+                # dot 끝 위치 = line의 x_right (PDF 실측)
+                p_node["_dotLeaderEnd"] = round(line["bbox"][2], 1)
+                p_node["_marginLeft"] = round(base_margin, 1)
             # spacingBefore (모든 요소에 적용)
             if not spacing_applied and spacing_before is not None:
                 p_node["spacingBefore"] = spacing_before
@@ -840,7 +866,9 @@ def process_table(table, page_num, page=None, drawings=None, text_blocks=None,
     if (blocks_to_scan and grid_cols and grid_rows
             and len(grid_cols) > 1 and len(grid_rows) > 1):
         # 헤더 행(row 0)의 각 셀 center 여부 판정
+        # 기준: 텍스트 중심이 셀 좌측보다 셀 중앙에 더 가까우면 center
         header_center_count = 0
+        header_checked = 0
         for col_idx in range(min(len(grid_cols) - 1, col_count)):
             cell_rect = fitz.Rect(
                 grid_cols[col_idx], grid_rows[0],
@@ -850,19 +878,44 @@ def process_table(table, page_num, page=None, drawings=None, text_blocks=None,
             cell_width = cell_rect.width
             spans = _find_spans_in_rect(blocks_to_scan, cell_rect)
             if spans:
-                scx = (spans[0]["bbox"][0] + spans[0]["bbox"][2]) / 2
-                if abs(scx - cell_center) < cell_width * 0.2:
+                text_left = spans[0]["bbox"][0]
+                text_right = spans[0]["bbox"][2]
+                text_width = text_right - text_left
+                # 텍스트가 셀 폭의 80% 이상이면 판정 불가 (좌측정렬과 center 구분 불가)
+                if text_width > cell_width * 0.8:
+                    continue
+                header_checked += 1
+                text_center = (text_left + text_right) / 2
+                dist_to_center = abs(text_center - cell_center)
+                dist_to_left = text_left - cell_rect.x0
+                if dist_to_center < dist_to_left:
                     header_center_count += 1
         # 과반수 이상이면 헤더 전체 center
-        if header_center_count > col_count * 0.5:
+        if header_checked > 0 and header_center_count > header_checked * 0.5:
             table_style["headerCenter"] = True
 
-    # headerBold인데 headerCenter 미감지 → bold 헤더는 대부분 center이므로 fallback
-    if table_style.get("headerBold") and not table_style.get("headerCenter"):
-        table_style["headerCenter"] = True
-
-    # cellBg (drawings에서)
+    # cellBg + borderColor (drawings에서)
     if (drawings and grid_cols and grid_rows):
+        table_rect = fitz.Rect(grid_cols[0], grid_rows[0], grid_cols[-1], grid_rows[-1])
+
+        # borderColor: 테이블 영역 내 얇은(< 2pt) fill rect의 대표 색상
+        border_colors = {}
+        for d in drawings:
+            fill = d.get("fill")
+            if not fill:
+                continue
+            d_rect = fitz.Rect(d["rect"])
+            if not d_rect.intersects(table_rect):
+                continue
+            if min(d_rect.width, d_rect.height) < 2:  # 얇은 rect = 테두리
+                hex_c = "".join(f"{int(c*255):02X}" for c in fill[:3])
+                border_colors[hex_c] = border_colors.get(hex_c, 0) + 1
+        if border_colors:
+            dominant = max(border_colors, key=border_colors.get)
+            if dominant != "000000":  # 검정이 아닌 경우만 설정 (기본값이 검정)
+                table_style["borderColor"] = dominant
+
+        # cellBg: 셀 영역과 70% 이상 겹치는 fill rect
         n_rows_bg = len(grid_rows) - 1
         n_cols_bg = len(grid_cols) - 1
         for row_idx in range(min(n_rows_bg, len(ir_rows))):
@@ -915,11 +968,10 @@ def process_image(doc, xref, rect, image_dir, page_num):
     }
 
     try:
-        pix = fitz.Pixmap(doc, xref)
-        if pix.n > 4:
-            pix = fitz.Pixmap(fitz.csRGB, pix)
-        if pix.alpha:
-            pix = fitz.Pixmap(pix, 0)
+        # 페이지 렌더링으로 이미지 추출 (투명/smask 정확 처리, 흰 배경)
+        page_obj = doc[page_num]
+        mat = fitz.Matrix(2, 2)  # 2x 해상도
+        pix = page_obj.get_pixmap(matrix=mat, clip=rect, alpha=False)
 
         if image_dir:
             os.makedirs(image_dir, exist_ok=True)
@@ -966,6 +1018,23 @@ def merge_mono_lines(nodes):
                 if "style" not in cb:
                     cb["style"] = {}
                 cb["style"]["lineSpacing"] = median_gap
+
+                # 후처리: median 기준 continuation 줄 병합 (블록 시작부 등 실시간 감지 누락분)
+                # gap < median * 0.6이면 PDF 자동 줄바꿈 → 이전 줄에 합침
+                if median_gap > 0 and len(code_lines) >= 2 and len(code_ys) == len(code_lines):
+                    new_lines = [code_lines[0]]
+                    new_indents = [code_indents[0]] if code_indents else [0]
+                    for j in range(1, len(code_lines)):
+                        g = round(code_ys[j] - code_ys[j - 1], 1)
+                        if 0 < g < median_gap * 0.6:
+                            new_lines[-1] += code_lines[j]
+                        else:
+                            new_lines.append(code_lines[j])
+                            new_indents.append(code_indents[j] if code_indents and j < len(code_indents) else 0)
+                    if len(new_lines) < len(code_lines):
+                        cb["lines"] = new_lines
+                        code_indents[:] = new_indents
+
         # 줄별 indent
         if code_indents:
             cb["lineIndents"] = code_indents
@@ -1099,12 +1168,28 @@ def detect_json_blocks(nodes):
     def _flush():
         nonlocal json_lines, json_indents, brace_depth, json_page, json_style
         if json_lines:
-            cb = {"type": "codeBlock", "lines": json_lines,
+            # JSON key-value 줄 병합: `"key":` + value → `"key":value`
+            # PDF에서 긴 value가 key와 별도 줄에 올 때 발생 (continuation과 유사)
+            import re as _re
+            merged_lines = [json_lines[0]]
+            merged_indents = [json_indents[0]] if json_indents else [0]
+            for j in range(1, len(json_lines)):
+                prev = merged_lines[-1].rstrip()
+                cur = json_lines[j].lstrip()
+                # key: 뒤에 value가 다음 줄로 넘어간 경우 병합
+                # value 시작: " (문자열), 숫자, true/false/null, {, [
+                if prev.endswith(':') and _re.match(r'^["{\[\d\-tfn]', cur) and len(cur) < 60:
+                    # value가 짧을 때만 병합 (긴 URL 등은 별도 줄 유지)
+                    merged_lines[-1] = prev + " " + cur if not cur.startswith('"') else prev + cur
+                else:
+                    merged_lines.append(json_lines[j])
+                    merged_indents.append(json_indents[j] if json_indents and j < len(json_indents) else 0)
+            cb = {"type": "codeBlock", "lines": merged_lines,
                   "language": "json", "_page": json_page}
             if json_style:
                 cb["style"] = json_style
-            if json_indents:
-                cb["lineIndents"] = json_indents
+            if merged_indents:
+                cb["lineIndents"] = merged_indents
             result.append(cb)
         json_lines = []
         json_indents = []
@@ -1127,6 +1212,13 @@ def detect_json_blocks(nodes):
             json_indents.extend(indents)
             if json_style is None and node.get("style"):
                 json_style = node["style"]
+            # lineSpacing 전파: 1줄 블록(lineSpacing 계산 불가)이 먼저 style을 점유한 경우,
+            # 이후 흡수되는 codeBlock의 lineSpacing을 항상 반영
+            elif (node.get("style", {}).get("lineSpacing") is not None
+                  and (json_style is None or json_style.get("lineSpacing") is None)):
+                if json_style is None:
+                    json_style = {}
+                json_style["lineSpacing"] = node["style"]["lineSpacing"]
             opens = text.count("{") + text.count("[")
             closes = text.count("}") + text.count("]")
             brace_depth += opens - closes
@@ -1316,6 +1408,66 @@ def promote_bold_labels(content):
                 content[i] = {"type": "heading", "level": 4, "text": text,
                               "_page": node.get("_page")}
     return content
+
+
+# ============================================================
+# 0-row fragment 병합 (경량 cross-page 처리)
+# ============================================================
+
+def _absorb_zero_row_fragments(content):
+    """0-row 테이블(cross-page fragment)을 독립 테이블로 변환.
+
+    pymupdf가 cross-page 테이블의 일부를 별도 테이블로 감지 → extract()[0]이 데이터를
+    헤더로 취급 → rows=0. 이 "헤더"를 데이터 행으로 변환하고, 직전 테이블의
+    진짜 헤더를 복사하여 정상 테이블로 만듦.
+
+    - 이전 테이블에 merge하지 않음 (페이지별 section 유지)
+    - 컬럼 수가 일치해야 변환 (안전 조건)
+    """
+    result = []
+    for node in content:
+        if (node.get("type") == "table"
+                and not node.get("rows")  # 0-row
+                and node.get("columns")):
+            # 직전 테이블 찾기
+            prev_table = None
+            for j in range(len(result) - 1, -1, -1):
+                if result[j].get("type") == "table":
+                    prev_table = result[j]
+                    break
+                if result[j].get("type") in ("heading",):
+                    break
+
+            cols = node["columns"]
+            if (prev_table
+                    and len(prev_table.get("columns", [])) == len(cols)):
+                # 현재 "헤더" → 데이터 행으로 변환, 헤더는 빈 문자열로 (렌더 시 skip)
+                fake_row = []
+                for c in cols:
+                    fake_row.append({"runs": [{"text": c.get("header", "")}]})
+                # 컬럼 너비는 직전 테이블에서 복사, 헤더 텍스트는 비움
+                new_cols = []
+                for pc in prev_table["columns"]:
+                    new_cols.append({
+                        "header": "",  # 빈 헤더 → 렌더러에서 헤더 행 skip
+                        "width": pc.get("width"),
+                        "padding": pc.get("padding"),
+                    })
+                node["columns"] = new_cols
+                node["rows"] = [fake_row]
+                # 스타일 복사하되 headerBold/headerCenter/headerBg 제거 (데이터이므로)
+                if prev_table.get("style"):
+                    st = dict(prev_table["style"])
+                    st.pop("headerBold", None)
+                    st.pop("headerCenter", None)
+                    st.pop("headerBg", None)
+                    st.pop("headerColor", None)
+                    node["style"] = st
+                node["_noHeader"] = True  # 렌더러에 헤더 행 skip 신호
+            result.append(node)
+        else:
+            result.append(node)
+    return result
 
 
 # ============================================================
@@ -1551,6 +1703,11 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
                                      text_blocks=text_blocks,
                                      faux_bold_map=faux_bold_map)
                 if node:
+                    # 테이블 spacingBefore: 이전 요소와의 간격
+                    if prev_bottom_y is not None:
+                        tbl_gap = round(elem["data"].bbox[1] - prev_bottom_y)
+                        if tbl_gap > 0:
+                            node["spacingBefore"] = min(tbl_gap, 100)
                     content.append(node)
                 prev_bottom_y = elem["data"].bbox[3]
             elif elem["kind"] == "image":
@@ -1567,6 +1724,11 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
                 node = process_image(doc, xref, rect, image_dir, page_num)
                 if img_spacing is not None:
                     node["spacingBefore"] = img_spacing
+                # 이미지 center 감지: 이미지 중심이 페이지 중심 근처이면 center
+                img_cx = (rect.x0 + rect.x1) / 2
+                page_cx = page.rect.width / 2
+                if abs(img_cx - page_cx) < page.rect.width * 0.1:
+                    node["align"] = "center"
                 content.append(node)
                 prev_bottom_y = rect.y1
 
@@ -1575,6 +1737,7 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
     content = merge_list_items(content)           # listItem → list
     content = detect_json_blocks(content)         # JSON 패턴 → codeBlock
     # content = merge_cross_page_tables(content)  # 비활성화: 페이지별 section 방식에서는 불필요
+    content = _absorb_zero_row_fragments(content)  # 0-row fragment → 이전 테이블에 행으로 병합
     content = promote_bold_labels(content)        # bold 라벨 → H4
     # pageBreak는 IR transformer가 처리 (PDF 파서에서 중복 삽입 방지)
     content = strip_internal_meta(content)        # _page 제거
