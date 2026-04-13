@@ -19,7 +19,10 @@ def process_image(doc, xref, rect, image_dir, page_num):
 
     try:
         page_obj = doc[page_num]
-        mat = fitz.Matrix(2, 2)
+        # 해상도: 작은 이미지는 2x, 큰 이미지는 1x (Word 열기 실패 방지)
+        area = width_pt * height_pt
+        scale = 2 if area < 100000 else 1  # 100000pt² ≈ 316x316pt
+        mat = fitz.Matrix(scale, scale)
         pix = page_obj.get_pixmap(matrix=mat, clip=rect, alpha=False)
 
         if image_dir:
