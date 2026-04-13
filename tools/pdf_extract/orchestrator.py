@@ -363,10 +363,10 @@ def extract_pdf_ir(pdf_path, image_dir=None, classify=None):
             if t.bbox[3] > max_y: max_y = t.bbox[3]
 
     margins = {
-        "left": round(base_margin),
-        "right": round(page_width - max_x),
-        "top": round(min_y),
-        "bottom": round(page_height - max_y),
+        "left": max(round(base_margin), 10),
+        "right": max(round(page_width - max_x), 10),
+        "top": max(round(min_y), 10),
+        "bottom": max(round(page_height - max_y), 10),
     }
 
     # 페이지별 margin (section별 동적 margin용)
