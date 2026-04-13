@@ -801,9 +801,8 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             if not spacing_applied and spacing_before is not None:
                 p_node["spacingBefore"] = spacing_before
             elif spacing_applied and prev_line_bottom is not None:
-                # 이전 줄과의 gap이 있으면 spacingBefore 추가
-                # 연속 줄(gap≈0): lineSpacing이 커버 → spacingBefore 불필요
-                # paragraph break(gap≥10pt) 또는 heading→body(gap≥3pt): spacingBefore 필요
+                # paragraph break만: gap이 body_size 이상이면 spacingBefore 추가
+                # 연속 줄(gap≈0)은 lineSpacing이 커버
                 line_gap = round(line["bbox"][1] - prev_line_bottom, 1)
                 if line_gap >= body_size:
                     p_node["spacingBefore"] = line_gap
