@@ -85,7 +85,6 @@ def _calculate_line_spacing(doc, skip_pages, body_size):
             if not all(round(s["size"]) == body_size for s in valid_spans):
                 continue
             # Word 기준 line spacing 배율 = pitch / (fontSize * 1.2)
-            # Word 표준 single spacing = font size * 1.2 (120%)
             word_standard = body_size * 1.2
             for i in range(1, len(lines)):
                 pitch = lines[i]["bbox"][1] - lines[i-1]["bbox"][1]
@@ -802,8 +801,9 @@ def process_text_block(block, level_map, body_size, skip_lines, table_rects, pag
             if not spacing_applied and spacing_before is not None:
                 p_node["spacingBefore"] = spacing_before
             elif spacing_applied and prev_line_bottom is not None:
-                # paragraph break만: gap이 body_size 이상이면 spacingBefore 추가
-                # (연속 줄은 lineSpacing이 커버, paragraph break만 추가 간격 필요)
+                # 이전 줄과의 gap이 있으면 spacingBefore 추가
+                # 연속 줄(gap≈0): lineSpacing이 커버 → spacingBefore 불필요
+                # paragraph break(gap≥10pt) 또는 heading→body(gap≥3pt): spacingBefore 필요
                 line_gap = round(line["bbox"][1] - prev_line_bottom, 1)
                 if line_gap >= body_size:
                     p_node["spacingBefore"] = line_gap
