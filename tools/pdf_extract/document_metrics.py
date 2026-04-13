@@ -3,7 +3,8 @@
 
 def calculate_margins(doc, skip_pages, body_size):
     """body_size 텍스트에서 좌/우 마진 + page_width 반환.
-    좌: 최빈값, 우: 95 퍼센타일 (n>=20) 또는 좌측 대칭.
+    좌: 최빈값 (테이블 영역 제외, page_width 절반 미만만).
+    우: 95 퍼센타일 (n>=20) 또는 좌측 대칭.
     """
     x_lefts, x_rights = [], []
     page_width = None
@@ -13,13 +14,23 @@ def calculate_margins(doc, skip_pages, body_size):
         page = doc[pi]
         if page_width is None:
             page_width = page.rect.width
+        # 테이블 영역 수집 (테이블 내 텍스트 x좌표 제외)
+        import fitz
+        table_rects = [fitz.Rect(t.bbox) for t in page.find_tables().tables]
         for block in page.get_text("dict")["blocks"]:
             if block["type"] != 0:
+                continue
+            # 테이블 영역 내 블록 제외
+            block_rect = fitz.Rect(block["bbox"])
+            if any(tr.intersects(block_rect) for tr in table_rects):
                 continue
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
                     if round(span["size"]) == body_size and span["text"].strip():
-                        x_lefts.append(round(span["bbox"][0]))
+                        x = round(span["bbox"][0])
+                        # page_width 절반 미만만 (2단 우측 컬럼 제외)
+                        if page_width and x < page_width * 0.5:
+                            x_lefts.append(x)
                         x_rights.append(round(span["bbox"][2]))
         if len(x_lefts) > 200:
             break
