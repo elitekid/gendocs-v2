@@ -71,6 +71,20 @@ class Lines(ElementCollection):
         W = max(row[-1].bbox[2]-row[0].bbox[0] for row in rows[1:])
         H = sum(row[0].bbox[3]-row[0].bbox[1] for row in rows) / num
 
+        # If most rows are nearly full-width (>90%), each row is an independent line
+        # (e.g. TOC entries, listings) — split into separate paragraphs to prevent
+        # Word from reflowing them into a single paragraph.
+        # Short rows (e.g. section numbers like "1", "6.1") are excluded from the check.
+        if num >= 3:
+            long_rows = [row for row in rows if (row[-1].bbox[2] - row[0].bbox[0]) / W > 0.30]
+            if long_rows:
+                full_width_count = sum(
+                    1 for row in long_rows
+                    if (row[-1].bbox[2] - row[0].bbox[0]) / W > 0.90
+                )
+                if full_width_count == len(long_rows):
+                    return [Lines(row) for row in rows]
+
         # check row by row
         res = []
         lines = Lines()

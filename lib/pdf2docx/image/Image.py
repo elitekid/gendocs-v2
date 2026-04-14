@@ -90,5 +90,21 @@ class Image(Element):
 
     def make_docx(self, paragraph):
         '''Add image span to a docx paragraph.'''
-        # add image
-        docx.add_image(paragraph, BytesIO(self.image), self.bbox.x0, self.bbox.y0, self.bbox.x1-self.bbox.x0, self.bbox.y1-self.bbox.y0)
+        width = self.bbox.x1 - self.bbox.x0
+        height = self.bbox.y1 - self.bbox.y0
+
+        # Check if paragraph is inside a table cell — use inline image instead of floating
+        from docx.oxml.ns import qn
+        parent = paragraph._element.getparent()
+        in_table = parent is not None and parent.tag == qn('w:tc')
+
+        if in_table:
+            # Inline image for table cells (floating anchor doesn't render correctly in cells)
+            from docx.shared import Pt
+            try:
+                run = paragraph.add_run()
+                run.add_picture(BytesIO(self.image), width=Pt(width), height=Pt(height))
+            except Exception:
+                pass  # skip unrecognized images
+        else:
+            docx.add_image(paragraph, BytesIO(self.image), self.bbox.x0, self.bbox.y0, width, height)

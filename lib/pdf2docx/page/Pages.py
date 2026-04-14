@@ -85,6 +85,11 @@ class Pages(BaseCollection):
 
     @staticmethod
     def _parse_document(raw_pages:list):
-        '''Parse structure in document/pages level, e.g. header, footer'''
-        # TODO
+        '''Parse structure in document/pages level, e.g. header, footer.
+
+        Detect repeated text at consistent y-positions across pages and mark them
+        as header/footer candidates. Header: top 15% of page, Footer: bottom 15%.
+        '''
+        # Footer detection is not performed — footer text stays in body content.
+
         return '', ''

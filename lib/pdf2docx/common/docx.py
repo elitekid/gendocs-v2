@@ -377,8 +377,10 @@ def add_image(p, image_path_or_stream, x_pos, y_pos, width, height):
         print('Unrecognized Image.')
         return
     
-    # exactly line spacing will destroy image display, so set single line spacing instead
-    p.paragraph_format.line_spacing = 1.00
+    # For floating images, the paragraph has minimal text-flow height since the image
+    # is anchored at absolute position. Reserve vertical space by setting exact line
+    # spacing to the image height, preventing subsequent content from overlapping.
+    p.paragraph_format.line_spacing = Pt(height)
 
 
 class _CT_Anchor(BaseOxmlElement):

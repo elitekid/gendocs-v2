@@ -69,6 +69,17 @@ class TextSpan(Element):
         # just an attribute placeholder: not used yet
         self.char_spacing = raw.get('char_spacing', 0.0)
 
+        # Average character width from raw chars (for faux-bold detection).
+        # Computed before chars may be modified/dropped by later processing.
+        if self.chars:
+            ascii_chars = [c for c in self.chars if c.c.strip() and ord(c.c) < 128]
+            if ascii_chars:
+                self._avg_char_width = sum(c.bbox[2] - c.bbox[0] for c in ascii_chars) / len(ascii_chars)
+            else:
+                self._avg_char_width = 0.0
+        else:
+            self._avg_char_width = 0.0
+
         # init text span element
         super().__init__(raw)
 

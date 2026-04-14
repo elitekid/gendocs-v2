@@ -186,9 +186,17 @@ class RawPage(BasePage, ABC):
             current_num_col = len(cols)
 
             # column check:
-            # consider 2-cols only
+            # consider 2-cols only; but >2 columns may indicate a 2-column layout
+            # with sub-elements (e.g. TOC with numbering + text on each side).
+            # Try merging into 2 columns based on page center.
             if current_num_col>2:
-                current_num_col = 1
+                page_center = (X0 + X1) / 2.0
+                left_elements = [e for c in cols for e in c if e.bbox[2] <= page_center + 20]
+                right_elements = [e for c in cols for e in c if e.bbox[0] >= page_center - 20]
+                if left_elements and right_elements:
+                    current_num_col = 2
+                else:
+                    current_num_col = 1
 
             # the width of two columns shouldn't have significant difference
             elif current_num_col==2:
@@ -198,7 +206,7 @@ class RawPage(BasePage, ABC):
                 c1, c2 = x0-X0, X1-x0 # column width
                 w1, w2 = u1-u0, m1-m0 # line width
                 f = 2.0
-                if not 1/f<=c1/c2<=f or w1/c1<0.33 or w2/c2<0.33:
+                if not 1/f<=c1/c2<=f or w1/c1<0.15 or w2/c2<0.15:
                     current_num_col = 1
 
             # process exceptions
@@ -262,9 +270,17 @@ class RawPage(BasePage, ABC):
             before_space = y0 - y_ref
         else:
             cols = elements.group_by_columns()
-            u0, v0, u1, v1 = cols[0].bbox
-            m0, n0, m1, n1 = cols[1].bbox
-            u = (u1+m0)/2.0
+            if len(cols) == 2:
+                u0, v0, u1, v1 = cols[0].bbox
+                m0, n0, m1, n1 = cols[1].bbox
+                u = (u1+m0)/2.0
+            else:
+                # >2 or 1 column groups: use page center as split point
+                u = (X0 + X1) / 2.0
+                v0 = elements.bbox[1]
+                v1 = elements.bbox[3]
+                n0 = v0
+                n1 = v1
 
             column_1 = Column().update_bbox((X0, v0, u, v1))
             column_1.add_elements(elements)

@@ -302,6 +302,13 @@ class TextBlock(Block):
         pf = docx.reset_paragraph_format(p)
 
         # ------------------------------------
+        # horizontal rules (independent lines above/below this block)
+        # ------------------------------------
+        h_rules = getattr(self, '_h_rules', {})
+        if h_rules:
+            self._apply_paragraph_borders(p, h_rules)
+
+        # ------------------------------------
         # vertical spacing
         # ------------------------------------
         before_spacing = max(round(self.before_space, 1), 0.0)
@@ -360,12 +367,114 @@ class TextBlock(Block):
         else:
             pf.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
+            # adjust right indent only to avoid unexpected line break
+            d = lower_round(self.right_space/constants.ITP, 1)
+            pf.right_indent = Inches(d)
+
         # ------------------------------------
         # add lines
         # ------------------------------------
-        for line in self.lines: line.make_docx(p)
+        # Detect dot-leader pattern (e.g. TOC: "Title ........... 3")
+        # and convert to native Word tab stop + dot leader for proper rendering.
+        if len(self.lines)==1 and self._is_dot_leader_line(self.lines[0]):
+            self._make_dot_leader_docx(p, self.lines[0])
+        else:
+            for line in self.lines: line.make_docx(p)
 
         return p
+
+    @staticmethod
+    def _is_dot_leader_line(line):
+        '''Check if a line has dot-leader pattern (text followed by dots and a number).'''
+        import re
+        text = line.text if hasattr(line, 'text') else ''
+        # Match: some text + at least 5 consecutive dots + optional space + number(s)
+        return bool(re.search(r'\.{5,}\s*\d+\s*$', text))
+
+    @staticmethod
+    def _apply_paragraph_borders(p, h_rules):
+        '''Apply top/bottom borders to a paragraph from detected horizontal rules.'''
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+        from ..common.share import rgb_component
+
+        pPr = p._element.get_or_add_pPr()
+        pBdr = pPr.find(qn('w:pBdr'))
+        if pBdr is None:
+            pBdr = OxmlElement('w:pBdr')
+            pPr.append(pBdr)
+
+        for side in ('top', 'bottom'):
+            if side not in h_rules:
+                continue
+            rule = h_rules[side]
+            width_eighths = max(2, int(rule['width'] * 8))  # in 1/8 pt
+            color_int = rule.get('color', 0)
+            if isinstance(color_int, (int, float)):
+                r, g, b = rgb_component(int(color_int))
+                hex_color = f'{r:02X}{g:02X}{b:02X}'
+            else:
+                hex_color = '000000'
+
+            border = OxmlElement(f'w:{side}')
+            border.set(qn('w:val'), 'single')
+            border.set(qn('w:sz'), str(width_eighths))
+            space = rule.get('space', 1)
+            border.set(qn('w:space'), str(space))
+            border.set(qn('w:color'), hex_color)
+            pBdr.append(border)
+
+    def _make_dot_leader_docx(self, p, line):
+        '''Render a dot-leader line using native Word tab stop instead of literal dots.'''
+        import re
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+
+        text = line.text if hasattr(line, 'text') else ''
+        # Split: "Title ........... 3" -> ("Title ", "3")
+        match = re.match(r'^(.*?)(\s*\.{5,}\s*)(\d+)\s*$', text)
+        if not match:
+            line.make_docx(p)
+            return
+
+        title_part = match.group(1).rstrip()
+        page_num = match.group(3)
+
+        # Get font properties from the first span
+        spans = list(line.spans) if hasattr(line, 'spans') else []
+        first_span = spans[0] if spans else None
+
+        # Calculate tab position relative to left margin.
+        # In Word, tab stop position is measured from the left margin.
+        # The line's right edge in PDF coordinates = line bbox x1.
+        # The page left margin = line bbox x0 - left_space (indent).
+        line_bbox = line.bbox if hasattr(line, 'bbox') else self.bbox
+        left_margin = line_bbox[0] - (self.left_space or 0)
+        tab_pos = line_bbox[2] - left_margin
+
+        # Add right-aligned tab stop with dot leader
+        from docx.enum.text import WD_TAB_ALIGNMENT, WD_TAB_LEADER
+        pf = p.paragraph_format
+        tab_stop = pf.tab_stops.add_tab_stop(
+            Pt(tab_pos),
+            alignment=WD_TAB_ALIGNMENT.RIGHT,
+            leader=WD_TAB_LEADER.DOTS
+        )
+
+        # Add title run
+        run1 = p.add_run(title_part)
+        if first_span and hasattr(first_span, '_set_text_format'):
+            first_span._set_text_format(run1)
+
+        # Add tab character
+        run_tab = p.add_run('\t')
+        if first_span and hasattr(first_span, '_set_text_format'):
+            first_span._set_text_format(run_tab)
+
+        # Add page number (with leading space to match PDF original spacing)
+        run2 = p.add_run(' ' + page_num)
+        if first_span and hasattr(first_span, '_set_text_format'):
+            first_span._set_text_format(run2)
 
 
 

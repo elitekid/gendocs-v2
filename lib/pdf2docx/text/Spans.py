@@ -17,10 +17,38 @@ class Spans(ElementCollection):
                 span = ImageSpan(raw_span)
             else:
                 span = TextSpan(raw_span)
-                if not span.text.strip() and not span.style: 
-                    span = None
+                # Drop whitespace-only spans, but preserve the space by prepending
+                # it to the next span's text to avoid losing inter-word gaps
+                # (e.g., "- 1000" becoming "-1000")
+                if not span.text.strip() and not span.style:
+                    # store the whitespace to prepend to next span
+                    self._pending_whitespace = getattr(self, '_pending_whitespace', '') + span.text
+                    continue
+
+            # prepend any pending whitespace from dropped spans
+            pending = getattr(self, '_pending_whitespace', '')
+            if pending and span and isinstance(span, TextSpan):
+                span._text = pending + span._text
+                if span.chars:
+                    from .Char import Char
+                    # insert space char(s) at the beginning
+                    for ch in reversed(pending):
+                        space_char = Char({'c': ch, 'bbox': list(span.bbox)})
+                        span.chars.insert(0, space_char)
+                self._pending_whitespace = ''
+            elif pending and span:
+                self._pending_whitespace = ''
 
             self.append(span)
+
+        # clear any trailing pending whitespace
+        if getattr(self, '_pending_whitespace', ''):
+            # append to last span if possible
+            if self._instances and isinstance(self._instances[-1], TextSpan):
+                last = self._instances[-1]
+                last._text = last._text + self._pending_whitespace
+            self._pending_whitespace = ''
+
         return self
 
     @property

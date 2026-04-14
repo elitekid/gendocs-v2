@@ -201,7 +201,9 @@ class Page(BasePage):
         # create flow layout: sections
         self.sections.make_docx(doc)
 
- 
+        # Footer text is kept in body content (not moved to Word Footer)
+        # to avoid margin/page count issues.
+
     def _restore_float_images(self, raws:list):
         '''Restore float images.'''
         self.float_images.reset()

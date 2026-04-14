@@ -167,6 +167,10 @@ class Layout(Element, ABC):
             self.shapes.text_style_shapes,
             settings['delete_end_line_hyphen'])
 
+        # detect independent horizontal rules (wide strokes not consumed as table/text style)
+        # and assign them as paragraph borders to adjacent text blocks
+        self._assign_horizontal_rules()
+
         # paragraph / line spacing
         self.blocks.parse_spacing(
             settings['line_separate_threshold'],
@@ -175,3 +179,81 @@ class Layout(Element, ABC):
             settings['lines_left_aligned_threshold'],
             settings['lines_right_aligned_threshold'],
             settings['lines_center_aligned_threshold'])
+
+    def _assign_horizontal_rules(self):
+        '''Find wide horizontal strokes not consumed by table/text parsing, and
+        assign them as top/bottom borders to adjacent text blocks.
+
+        A horizontal rule is a stroke shape with width > 50% of the working bbox
+        and height < 3pt, not assigned to any table border or text style.
+        '''
+        from ..shape.Shape import Shape
+
+        working_w = self.working_bbox[2] - self.working_bbox[0] if hasattr(self, 'working_bbox') else 500
+
+        # Collect unassigned wide horizontal strokes
+        rules = []
+        for shape in self.shapes:
+            if not isinstance(shape, Shape):
+                continue
+            if shape.is_determined:
+                continue
+            w = shape.bbox[2] - shape.bbox[0]
+            h = shape.bbox[3] - shape.bbox[1]
+            if w > working_w * 0.5 and h < 3:
+                rules.append(shape)
+
+        if not rules:
+            return
+
+        # Match each rule to the closest adjacent text block.
+        # Prefer assigning as top border to the block below (visually cleaner),
+        # only use bottom border if no block below is close enough.
+        for rule in rules:
+            rule_y = (rule.bbox[1] + rule.bbox[3]) / 2.0
+            rule_color = getattr(rule, 'color', 0)
+            rule_h = rule.bbox[3] - rule.bbox[1]
+            rule_info = {'width': max(rule_h, 0.5), 'color': rule_color}
+
+            # Find closest block below (top border candidate)
+            best_below = None
+            best_below_dist = 999
+            # Find closest block above (bottom border candidate)
+            best_above = None
+            best_above_dist = 999
+
+            for block in self.blocks:
+                if not block.is_text_block:
+                    continue
+                block_top = block.bbox[1]
+                block_bottom = block.bbox[3]
+
+                if rule_y < block_top:
+                    dist = block_top - rule_y
+                    if dist < best_below_dist and dist < 15:
+                        best_below_dist = dist
+                        best_below = block
+
+                elif rule_y > block_bottom:
+                    dist = rule_y - block_bottom
+                    if dist < best_above_dist and dist < 15:
+                        best_above_dist = dist
+                        best_above = block
+
+            # Assign to the closer block to avoid gap mismatch.
+            if best_below and best_above:
+                target = best_below if best_below_dist <= best_above_dist else best_above
+                side = 'top' if target is best_below else 'bottom'
+            elif best_below:
+                target = best_below
+                side = 'top'
+            else:
+                target = best_above
+                side = 'bottom'
+
+            if target:
+                if not hasattr(target, '_h_rules'):
+                    target._h_rules = {}
+                dist = best_below_dist if target is best_below else best_above_dist
+                rule_info['space'] = max(round(dist), 1)
+                target._h_rules[side] = rule_info
